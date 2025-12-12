@@ -1,0 +1,18 @@
+# Smart Search Pro - Core Module Requirements
+
+# YAML configuration
+PyYAML>=6.0.1
+
+# Rich console output and logging
+rich>=13.7.0
+
+# Testing
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
+pytest-cov>=4.1.0
+
+# Type checking
+mypy>=1.7.1
+
+# Code quality
+ruff>=0.1.8

@@ -1,0 +1,248 @@
+================================================================================
+                        SMART SEARCH - START HERE
+                     Guía de Instalación de Dependencias
+================================================================================
+
+Bienvenido a Smart Search. Para que funcione correctamente, necesitas
+instalar las dependencias de Python.
+
+OPCION RECOMENDADA (Más fácil):
+================================================================================
+
+1. Hacer DOBLE-CLICK en este archivo:
+   >> install_dependencies.bat <<
+
+   Este script:
+   - Verifica que Python esté instalado
+   - Instala automáticamente todas las dependencias
+   - Verifica que todo funciona
+
+
+DESPUES DE INSTALAR:
+================================================================================
+
+Para verificar que todo está bien, ejecuta:
+   python check_dependencies.py
+
+Si ves "Status: ALL DEPENDENCIES OK" - ¡Listo!
+Puedes ejecutar Smart Search: python main.py
+
+
+DOCUMENTOS DE REFERENCIA:
+================================================================================
+
+Para más información, consulta:
+
+1. INSTALLATION_QUICK_START.txt
+   - Pasos detallados de instalación
+   - Solución de problemas
+   - Métodos alternativos
+
+2. DEPENDENCIES_README.md
+   - Documentación completa
+   - Descripción de cada dependencia
+   - Troubleshooting detallado
+
+3. SETUP_SUMMARY.md
+   - Resumen ejecutivo
+   - Archivos creados/actualizados
+   - Comandos rápidos
+
+4. requirements.txt
+   - Lista de dependencias necesarias
+   - Versiones mínimas requeridas
+
+
+DEPENDENCIAS PRINCIPALES:
+================================================================================
+
+PyQt6          - Interfaz gráfica (GUI)
+pywin32        - Acceso a Windows API
+comtypes       - Componentes COM
+send2trash     - Eliminación segura a papelera
+
+
+INSTALACIÓN RÁPIDA - 3 PASOS:
+================================================================================
+
+PASO 1: Verificar Python
+---------
+Abre Command Prompt (CMD) y escribe:
+  python --version
+
+Si no funciona, instala Python desde:
+  https://www.python.org/
+  (Importante: marca "Add Python to PATH")
+
+PASO 2: Instalar dependencias
+---------
+Haz DOBLE-CLICK en:
+  install_dependencies.bat
+
+O abre Command Prompt y escribe:
+  pip install -r requirements.txt
+
+PASO 3: Verificar instalación
+---------
+Abre Command Prompt y escribe:
+  python check_dependencies.py
+
+Resultado esperado: "ALL DEPENDENCIES OK"
+
+
+TROUBLESHOOTING RÁPIDO:
+================================================================================
+
+Problema: "Python no se reconoce"
+Solución:
+  1. Instalar Python desde https://www.python.org/
+  2. Marcar "Add Python to PATH"
+  3. Reiniciar Command Prompt
+  4. Verificar: python --version
+
+Problema: Permisos denegados
+Solución:
+  1. Abrir Command Prompt como Administrador
+  2. Ejecutar: install_dependencies.bat
+
+Problema: Módulo no encontrado
+Solución:
+  1. Ejecutar: python check_dependencies.py
+  2. Ver qué falta
+  3. Ejecutar: pip install -r requirements.txt
+  4. Verificar: python check_dependencies.py
+
+
+ARCHIVOS EN ESTE DIRECTORIO:
+================================================================================
+
+Scripts (Ejecutar):
+  ✓ install_dependencies.bat      - Instalador principal [RECOMENDADO]
+  ✓ quick_dependency_check.cmd    - Verificación rápida
+  ✓ check_dependencies.py         - Verificación detallada
+  ✓ update_requirements.py        - Actualizar versiones
+
+Configuración:
+  ✓ requirements.txt              - Listado de dependencias
+
+Documentación:
+  ✓ START_DEPENDENCIES.txt        - Este archivo (inicio)
+  ✓ INSTALLATION_QUICK_START.txt  - Guía de instalación
+  ✓ DEPENDENCIES_README.md        - Documentación completa
+  ✓ SETUP_SUMMARY.md              - Resumen ejecutivo
+
+Proyecto:
+  ✓ main.py                       - Ejecutable principal
+  ✓ ui.py                         - Interfaz gráfica
+  ✓ backend.py                    - Lógica
+  ✓ run.bat                       - Ejecutable Windows
+
+
+FLUJO DE INSTALACION:
+================================================================================
+
+┌─────────────────────────────────────────────────────────────┐
+│                    ¿Tienes Python 3.8+?                     │
+└─────────────────────────────────────────────────────────────┘
+                           ↓ SI ↓
+┌─────────────────────────────────────────────────────────────┐
+│              Ejecuta install_dependencies.bat                │
+│                (Doble-click en el archivo)                   │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│              Espera a que termine la instalación             │
+│              (Presiona ENTER cuando lo indique)              │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│         Ejecuta: python check_dependencies.py                │
+│                Verifica que todo sea [OK]                    │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│              ¡Listo! Ejecuta Smart Search                    │
+│           python main.py  O  doble-click en run.bat          │
+└─────────────────────────────────────────────────────────────┘
+
+
+COMANDOS ÚTILES:
+================================================================================
+
+Instalar todo:
+  install_dependencies.bat
+
+Verificar estado:
+  python check_dependencies.py
+
+Actualizar dependencias:
+  python update_requirements.py --current
+
+Ver este archivo en Command Prompt:
+  type START_DEPENDENCIES.txt
+
+Ver requirements.txt:
+  type requirements.txt
+
+Listar paquetes instalados:
+  pip list
+
+
+SOPORTE AVANZADO:
+================================================================================
+
+Si necesitas más control, consulta:
+
+1. DEPENDENCIES_README.md - Sección "Métodos de Instalación"
+2. INSTALLATION_QUICK_START.txt - Sección "Solución de Problemas"
+3. SETUP_SUMMARY.md - Sección "Flujo de Instalación Recomendado"
+
+Para problemas complejos:
+  1. Ejecutar: python check_dependencies.py
+  2. Leer el error reportado
+  3. Consultar DEPENDENCIES_README.md
+  4. Si persiste, eliminar y reinstalar:
+     pip uninstall -y PyQt6 pywin32 comtypes send2trash
+     pip install -r requirements.txt
+
+
+REQUISITOS MINIMOS:
+================================================================================
+
+Sistema Operativo:  Windows 10 / 11
+Python:             3.8 - 3.13
+pip:                21.0+
+Memoria:            512 MB (mínimo)
+Disco:              500 MB (máximo para todas las dependencias)
+Internet:           Necesario solo para la instalación
+
+
+NOTAS:
+================================================================================
+
+- La instalación típica toma 2-5 minutos
+- Necesitas conexión a Internet solo para descargar los paquetes
+- Después de instalar, funciona sin Internet
+- Usa un entorno virtual si planeas desarrollar
+  (Ver DEPENDENCIES_README.md para instrucciones)
+- Los archivos .bat deben ejecutarse desde Windows, no desde Git Bash
+
+
+PROXIMO PASO:
+================================================================================
+
+Haz DOBLE-CLICK en:
+  ▶ install_dependencies.bat
+
+O abre Command Prompt en este directorio y escribe:
+  install_dependencies.bat
+
+
+Preguntas frecuentes:
+  Ver DEPENDENCIES_README.md sección "Solucionar Problemas"
+
+
+================================================================================
+Última actualización: Diciembre 2025
+Versión: 1.0
+================================================================================

@@ -1,0 +1,44 @@
+# Smart Search Pro - Full Dependencies
+# =====================================
+# Install: pip install -r requirements_full.txt
+
+# Core GUI Framework
+PyQt6>=6.6.0
+
+# Windows Integration
+pywin32>=306
+comtypes>=1.2.0
+
+# File Operations
+send2trash>=1.8.2
+
+# Image Processing
+Pillow>=10.0.0
+
+# Excel Export
+openpyxl>=3.1.0
+
+# Syntax Highlighting
+Pygments>=2.17.0
+
+# Fast Hashing (optional but recommended)
+xxhash>=3.4.0
+
+# YAML Configuration
+PyYAML>=6.0.1
+
+# Console Output
+rich>=13.0.0
+
+# PDF Preview (optional)
+pypdf>=3.17.0
+
+# Archive Support
+py7zr>=0.20.0
+
+# Clipboard
+pyperclip>=1.8.0
+
+# Testing
+pytest>=7.4.0
+pytest-qt>=4.2.0

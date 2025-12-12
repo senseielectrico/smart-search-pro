@@ -1,0 +1,12 @@
+PyQt6>=6.6.0
+PyQt6-Qt6>=6.6.0
+PyQt6-sip>=13.6.0
+pywin32>=305
+comtypes>=1.1.14
+send2trash>=1.8.2
+psutil>=5.9.0
+
+# Optional dependencies for file unlocking/decryption tools
+# Install with: pip install msoffcrypto-tool pikepdf
+# msoffcrypto-tool>=5.0.0  # Office document decryption
+# pikepdf>=8.0.0            # PDF password removal

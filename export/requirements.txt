@@ -1,0 +1,10 @@
+# Export Module Requirements
+
+# Excel support
+openpyxl>=3.1.0
+
+# Clipboard support (optional but recommended)
+pyperclip>=1.8.0
+
+# For Windows clipboard fallback
+pywin32>=306; sys_platform == 'win32'

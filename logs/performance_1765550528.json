@@ -1,0 +1,36 @@
+{
+  "startup_time_ms": 0.0,
+  "average_search_latency_ms": 0.0,
+  "memory_usage_mb": 146.4453125,
+  "peak_memory_mb": 146.80859375,
+  "metrics_count": 4,
+  "timestamp": "2025-12-12T08:42:08.194856",
+  "search_metrics": {
+    "count": 0,
+    "average_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0
+  },
+  "top_slow_operations": [
+    {
+      "name": "main_window_creation",
+      "duration_ms": 423.64869998709764,
+      "timestamp": "2025-12-12T08:42:08.191048"
+    },
+    {
+      "name": "qt_app_creation",
+      "duration_ms": 20.547200008877553,
+      "timestamp": "2025-12-12T08:42:06.602742"
+    },
+    {
+      "name": "icon_creation",
+      "duration_ms": 1.3441000046441332,
+      "timestamp": "2025-12-12T08:42:07.765768"
+    },
+    {
+      "name": "lazy_import_single_instance",
+      "duration_ms": 0.45959999260958284,
+      "timestamp": "2025-12-12T08:42:07.766948"
+    }
+  ]
+}

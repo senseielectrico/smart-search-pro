@@ -1,0 +1,221 @@
+================================================================================
+                    SMART SEARCH - INSTALLATION QUICK START
+================================================================================
+
+ARCHIVOS CREADOS:
+================================================================================
+
+1. requirements.txt
+   - Lista completa de dependencias con versiones mínimas
+   - Contiene: PyQt6, pywin32, comtypes, send2trash
+
+2. install_dependencies.bat
+   - Script principal de instalación para Windows
+   - Verifica Python, pip, actualiza e instala todo
+   - Recomendado: USAR ESTE ARCHIVO PRIMERO
+
+3. check_dependencies.py
+   - Verificador de dependencias
+   - Muestra estado de instalación de cada paquete
+   - Sugiere acciones si hay problemas
+   - Uso: python check_dependencies.py
+
+4. quick_dependency_check.cmd
+   - Atajo rápido para verificar dependencias
+   - Más simple que install_dependencies.bat
+
+5. DEPENDENCIES_README.md
+   - Documentación completa
+   - Solucionar problemas
+   - Metodos alternativos de instalación
+
+6. INSTALLATION_QUICK_START.txt
+   - Este archivo (guía rápida)
+
+
+PASOS DE INSTALACIÓN - OPCIÓN RECOMENDADA:
+================================================================================
+
+PASO 1: Verificar que Python está instalado
+-----------
+Abre Command Prompt y escribe:
+  python --version
+
+Si no funciona:
+  - Descargar Python desde https://www.python.org/
+  - Instalar con "Add Python to PATH" marcado
+  - Reiniciar Command Prompt
+
+PASO 2: Ejecutar el instalador
+-----------
+En la carpeta smart_search, doble-click en:
+  install_dependencies.bat
+
+O desde Command Prompt:
+  install_dependencies.bat
+
+El script automáticamente:
+  - Verificará Python
+  - Actualizará pip
+  - Instalará todas las dependencias
+  - Verificará la instalación
+
+PASO 3: Verificar que todo funciona
+-----------
+Ejecuta:
+  python check_dependencies.py
+
+Deberías ver: "Status: ALL DEPENDENCIES OK"
+
+
+DEPENDENCIAS PRINCIPALES:
+================================================================================
+
+[1] PyQt6 (v6.6.0+)
+    - Framework GUI (interfaz gráfica)
+    - Componentes: PyQt6, PyQt6-Qt6, PyQt6-sip
+    - Estado: REQUERIDA
+
+[2] pywin32 (v305+)
+    - Acceso a APIs de Windows
+    - Necesaria para búsqueda y funcionalidades del SO
+    - Estado: REQUERIDA
+
+[3] comtypes (v1.1.14+)
+    - Soporte para interfaces COM
+    - Complementaria a pywin32
+    - Estado: REQUERIDA
+
+[4] send2trash (v1.8.2+)
+    - Eliminación segura a papelera
+    - En lugar de borrado permanente
+    - Estado: RECOMENDADA
+
+
+MÉTODOS ALTERNATIVOS DE INSTALACIÓN:
+================================================================================
+
+Método 2 - Instalación manual con pip:
+  python -m pip install -r requirements.txt
+
+Método 3 - Entorno virtual (para desarrollo):
+  python -m venv venv
+  venv\Scripts\activate
+  pip install -r requirements.txt
+
+Método 4 - Instalación individual:
+  python -m pip install PyQt6>=6.6.0
+  python -m pip install pywin32>=305
+  python -m pip install comtypes>=1.1.14
+  python -m pip install send2trash>=1.8.2
+
+
+SOLUCIÓN DE PROBLEMAS:
+================================================================================
+
+PROBLEMA: "Python no se reconoce"
+SOLUCIÓN:
+  1. Instalar Python desde https://www.python.org/
+  2. Marcar "Add Python to PATH"
+  3. Reiniciar terminal
+
+PROBLEMA: Error de permisos
+SOLUCIÓN:
+  - Ejecutar Command Prompt como Administrador
+  - O usar: pip install --user -r requirements.txt
+
+PROBLEMA: Módulos no encontrados
+SOLUCIÓN:
+  1. python check_dependencies.py
+  2. python -m pip install -r requirements.txt
+  3. python check_dependencies.py (verificar nuevamente)
+
+PROBLEMA: Versión antigua de pip
+SOLUCIÓN:
+  python -m pip install --upgrade pip
+
+
+DESPUÉS DE INSTALAR:
+================================================================================
+
+Para ejecutar Smart Search:
+  - Windows: double-click run.bat
+  - O: python main.py
+
+Para verificar instalación en cualquier momento:
+  python check_dependencies.py
+
+
+INFORMACIÓN TÉCNICA:
+================================================================================
+
+Ubicación de archivos:
+  C:\Users\ramos\.local\bin\smart_search\
+
+Versión de Python requerida: 3.8+
+Versión de pip requerida: 21.0+
+
+Documentación completa:
+  Ver DEPENDENCIES_README.md
+
+
+ESTRUCTURA DE INSTALACIÓN:
+================================================================================
+
+smart_search/
+├── requirements.txt                    [Actualizado]
+├── install_dependencies.bat            [NUEVO]
+├── check_dependencies.py               [NUEVO]
+├── quick_dependency_check.cmd          [NUEVO]
+├── DEPENDENCIES_README.md              [NUEVO]
+├── INSTALLATION_QUICK_START.txt        [NUEVO - Este archivo]
+├── main.py
+├── ui.py
+├── backend.py
+└── ... (otros archivos)
+
+
+CHECKLIST DE INSTALACIÓN:
+================================================================================
+
+[_] 1. Python 3.8+ instalado
+[_] 2. Ejecutado install_dependencies.bat
+[_] 3. Ejecutado python check_dependencies.py
+[_] 4. Resultado: "ALL DEPENDENCIES OK"
+[_] 5. Ejecutado run.bat o python main.py
+[_] 6. Smart Search funciona correctamente
+
+
+PRÓXIMOS PASOS:
+================================================================================
+
+1. Ejecutar: install_dependencies.bat
+2. Esperar a que finalice
+3. Ejecutar: python check_dependencies.py
+4. Si todo está OK, ejecutar: python main.py
+
+Para más ayuda:
+  - Ver DEPENDENCIES_README.md
+  - Ver archivos START_HERE.md o README.md
+
+
+SOPORTE:
+================================================================================
+
+Si hay problemas:
+
+1. Verificar que Python está en PATH:
+   python --version
+
+2. Verificar estado de dependencias:
+   python check_dependencies.py
+
+3. Revisar logs de errores en la consola
+
+4. Consultar DEPENDENCIES_README.md para troubleshooting
+
+
+================================================================================
+Creado: Diciembre 2025
+Versión: 1.0
+================================================================================

@@ -1,0 +1,159 @@
+================================================================================
+             SMART SEARCH - GUIA DE USO RAPIDO
+================================================================================
+
+ESTADO: ✓ LA APLICACION FUNCIONA CORRECTAMENTE
+
+================================================================================
+COMO INICIAR LA APLICACION
+================================================================================
+
+OPCION 1 - MAS FACIL (Doble clic):
+   - Haz doble clic en: run_smart_search.bat
+   - La ventana se abrirá sin consola
+
+OPCION 2 - Desde línea de comandos:
+   cd C:\Users\ramos\.local\bin\smart_search
+   python main.py
+
+   NOTA: La consola se quedará esperando hasta que cierres la ventana.
+         Esto es NORMAL, no es un error.
+
+OPCION 3 - Sin ventana de consola:
+   pythonw smart_search.pyw
+
+================================================================================
+QUE VAS A VER
+================================================================================
+
+Cuando inicies la app verás:
+
+1. PANEL IZQUIERDO: Arbol de directorios
+   - Muestra carpetas indexadas por Windows
+   - Marca/desmarca casillas para seleccionar donde buscar
+
+2. PANEL DERECHO: Pestañas de resultados
+   - Documentos
+   - Imagenes
+   - Videos
+   - Audio
+   - Codigo
+   - Comprimidos
+   - Ejecutables
+   - Datos
+   - Otros
+
+3. BARRA SUPERIOR: Campo de busqueda
+   - Ingresa palabras separadas por *
+   - Ejemplo: python * script
+   - Marca "Filename" para buscar en nombres
+   - Marca "Content" para buscar en contenido
+
+4. BOTONES DE ACCION:
+   - Search: Iniciar busqueda
+   - Stop: Detener busqueda
+   - Dark Mode: Cambiar tema
+   - Open: Abrir archivos seleccionados
+   - Open Location: Abrir carpeta
+   - Copy To / Move To: Copiar/mover archivos
+   - Clear Results: Limpiar resultados
+
+================================================================================
+EJEMPLO DE USO
+================================================================================
+
+1. Inicia la app (doble clic en run_smart_search.bat)
+
+2. En el panel izquierdo, marca las carpetas donde quieres buscar
+   (Ejemplo: Documents, Downloads)
+
+3. En el campo de busqueda escribe lo que buscas
+   (Ejemplo: proyecto * python)
+
+4. Marca "Filename" (buscar en nombres de archivo)
+
+5. Haz clic en "Search"
+
+6. Los resultados apareceran en las pestañas segun tipo de archivo
+
+7. Selecciona un archivo y usa los botones para:
+   - Abrirlo
+   - Ver su ubicacion
+   - Copiarlo a otra carpeta
+   - Moverlo
+
+================================================================================
+VERIFICAR QUE TODO FUNCIONA
+================================================================================
+
+Ejecuta el test de diagnostico:
+   python test_launch.py
+
+Debe mostrar:
+   ✓ ALL DIAGNOSTICS PASSED
+
+================================================================================
+NOTAS IMPORTANTES
+================================================================================
+
+1. La primera vez puede tardar 2-3 segundos en cargar
+   (Carga las carpetas indexadas de Windows)
+
+2. Cuando ejecutas "python main.py" desde consola:
+   - La consola NO se cierra hasta que cierres la ventana
+   - Esto es NORMAL, no es un error
+   - La app ESTA FUNCIONANDO
+
+3. Los resultados se agrupan automaticamente por tipo de archivo
+
+4. Puedes usar * para buscar multiples palabras
+   Ejemplo: "python * search * windows"
+
+5. La configuracion se guarda automaticamente:
+   - Tema (claro/oscuro)
+   - Carpetas seleccionadas
+   - Tamaño de ventana
+
+================================================================================
+ARCHIVOS PRINCIPALES
+================================================================================
+
+run_smart_search.bat  - Inicio rapido (doble clic)
+main.py              - Aplicacion principal
+smart_search.pyw     - Inicio sin consola
+test_launch.py       - Test de diagnostico
+start.bat            - Inicio avanzado con opciones
+
+================================================================================
+SOLUCION DE PROBLEMAS
+================================================================================
+
+Problema: "La consola se queda colgada"
+Solucion: No esta colgada, esta esperando que cierres la ventana.
+          Es comportamiento normal de aplicaciones GUI.
+
+Problema: "No veo la ventana"
+Solucion: 1. Revisa la barra de tareas de Windows
+          2. Ejecuta: start.bat --console
+          3. Verifica que Python este instalado
+
+Problema: "Error al importar modulos"
+Solucion: 1. Ejecuta: python test_launch.py
+          2. Instala las dependencias que falten:
+             pip install PyQt6 pywin32 comtypes
+
+================================================================================
+SOPORTE
+================================================================================
+
+Ubicacion: C:\Users\ramos\.local\bin\smart_search
+
+Archivos de configuracion:
+   %USERPROFILE%\.smart_search\config.json
+   %USERPROFILE%\.smart_search\directory_tree.json
+   %USERPROFILE%\.smart_search\error.log
+
+Para mas informacion ver:
+   DIAGNOSTIC_COMPLETE.md - Reporte completo de diagnostico
+
+================================================================================

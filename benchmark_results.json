@@ -1,0 +1,50 @@
+{
+  "timestamp": "2025-12-11T19:01:30.872726",
+  "benchmarks": {
+    "cache": {
+      "queries_tested": 100,
+      "unique_queries": 20,
+      "miss_time_ms": 0.25,
+      "hit_time_ms": 0.17,
+      "speedup": 1.51,
+      "hit_rate": 90.0,
+      "cache_size": 20,
+      "memory_used_mb": 0.0035
+    },
+    "indexer": {
+      "documents_indexed": 1000,
+      "index_time_ms": 4.67,
+      "index_rate_docs_per_sec": 214038.78,
+      "search_single_word_ms": 0.0255,
+      "search_single_results": 1000,
+      "search_multi_word_ms": 0.0374,
+      "search_multi_results": 1000
+    },
+    "worker_pool": {
+      "tasks": 100,
+      "sequential_time_ms": 34.08,
+      "parallel_2_workers_ms": 42.17,
+      "parallel_4_workers_ms": 40.32,
+      "parallel_8_workers_ms": 36.16,
+      "speedup_2_workers": 0.81,
+      "speedup_4_workers": 0.85,
+      "speedup_8_workers": 0.94
+    },
+    "memory_manager": {
+      "initial_memory_mb": 24.83,
+      "after_allocation_mb": 28.82,
+      "after_cleanup_mb": 28.84,
+      "cleanup_time_ms": 3.16,
+      "cleanup_callbacks_executed": 1
+    },
+    "query_optimizer": {
+      "test_queries": 3,
+      "first_optimization_ms": 0.0772,
+      "cached_optimization_ms": 0.0012,
+      "speedup": 64.8,
+      "batch_queries": 1000,
+      "batch_time_ms": 1.59,
+      "batch_rate_queries_per_sec": 629397.36
+    }
+  }
+}

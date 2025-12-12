@@ -1,0 +1,50 @@
+# Smart Search - Testing Dependencies
+# ====================================
+#
+# Instalación:
+#   pip install -r requirements-test.txt
+#
+# O instalar todo (incluyendo dependencias principales):
+#   pip install -r requirements.txt -r requirements-test.txt
+
+# Testing Framework
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-html>=3.2.0
+pytest-xdist>=3.3.1          # Parallel test execution
+pytest-timeout>=2.1.0         # Test timeouts
+pytest-mock>=3.11.0           # Mocking utilities
+
+# Coverage
+coverage>=7.2.0
+
+# Performance Testing
+psutil>=5.9.0                 # System monitoring
+memory-profiler>=0.61.0       # Memory profiling
+
+# Mocking and Testing Utilities
+mock>=5.1.0
+faker>=19.0.0                 # Generate fake data
+
+# Code Quality
+flake8>=6.0.0                 # Linting
+pylint>=2.17.0                # Static analysis
+black>=23.3.0                 # Code formatting
+isort>=5.12.0                 # Import sorting
+
+# Type Checking
+mypy>=1.4.0                   # Type checker
+types-setuptools              # Type stubs
+
+# Documentation Testing
+doctest>=0.0.0                # Docstring testing
+
+# Benchmarking
+pytest-benchmark>=4.0.0       # Benchmarking
+
+# Optional: For UI Testing
+# pytest-qt>=4.2.0            # PyQt testing (uncomment if needed)
+
+# Reporting
+pytest-json-report>=1.5.0     # JSON reports
+pytest-metadata>=3.0.0        # Test metadata
