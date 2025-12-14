@@ -110,6 +110,13 @@ class BaseExporter(ABC):
         self.config = config or ExportConfig()
         self.stats = ExportStats()
 
+    def _get_attr(self, item, attr, default=None):
+        """Get attribute from dict or object."""
+        if isinstance(item, dict):
+            return item.get(attr, default)
+        return getattr(item, attr, default)
+
+
     @abstractmethod
     def export(self, results: List[Any]) -> ExportStats:
         """
@@ -145,7 +152,7 @@ class BaseExporter(ABC):
 
         # Filter empty results
         if self.config.filter_empty:
-            results = [r for r in results if r.filename and r.path]
+            results = [r for r in results if self._get_attr(r, 'filename') and self._get_attr(r, 'path')]
 
         self.stats.duration_seconds = time.time() - start_time
         return results
@@ -161,7 +168,7 @@ class BaseExporter(ABC):
         Returns:
             Formatted value
         """
-        value = getattr(result, column, "")
+        value = self._get_attr(result, column, "")
 
         # Handle special formatting
         if column in ["date_created", "date_modified", "date_accessed"]:

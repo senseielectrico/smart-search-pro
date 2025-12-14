@@ -36,13 +36,19 @@ class HTMLExporter(BaseExporter):
     - Export to CSV from browser
     """
 
-    def __init__(self, config: Optional[ExportConfig] = None):
+    def __init__(self, config: Optional[ExportConfig] = None, title: str = "Smart Search Results", **kwargs):
         """
         Initialize HTML exporter.
 
         Args:
             config: Export configuration
+            title: HTML page title
+            **kwargs: Additional options
         """
+        # Handle direct keyword arguments
+        if config is None:
+            options = {"title": title, **kwargs}
+            config = ExportConfig(options=options, overwrite=True)
         super().__init__(config)
 
         # HTML-specific options
@@ -52,14 +58,15 @@ class HTMLExporter(BaseExporter):
         self.searchable = self.config.options.get("searchable", True)
         self.paginate = self.config.options.get("paginate", True)
         self.page_size = self.config.options.get("page_size", 100)
-        self.title = self.config.options.get("title", "Smart Search Results")
+        self.title = title if title != "Smart Search Results" else self.config.options.get("title", "Smart Search Results")
 
-    def export(self, results: List) -> ExportStats:
+    def export(self, results: List, output_path: Optional[str] = None) -> ExportStats:
         """
         Export results to HTML file.
 
         Args:
             results: Search results to export
+            output_path: Optional output file path (overrides config)
 
         Returns:
             Export statistics
@@ -68,6 +75,10 @@ class HTMLExporter(BaseExporter):
             ExportError: If export fails
         """
         start_time = time.time()
+
+        # Use provided output_path or fall back to config
+        if output_path:
+            self.config.output_path = Path(output_path)
 
         # Validate output path
         if not self.config.output_path:
@@ -477,21 +488,21 @@ class HTMLExporter(BaseExporter):
 
     def _calculate_stats(self, results: List) -> dict:
         """Calculate summary statistics."""
-        total_size = sum(r.size for r in results if not r.is_folder)
+        total_size = sum(self._get_attr(r, 'size', 0) for r in results if not self._get_attr(r, 'is_folder', False))
 
         return {
             "total": len(results),
-            "files": sum(1 for r in results if not r.is_folder),
-            "folders": sum(1 for r in results if r.is_folder),
+            "files": sum(1 for r in results if not self._get_attr(r, "is_folder", False)),
+            "folders": sum(1 for r in results if self._get_attr(r, "is_folder", False)),
             "total_size": self._format_size_human(total_size),
         }
 
     def _get_icon_class(self, result) -> str:
         """Get icon class for file type."""
-        if result.is_folder:
+        if self._get_attr(result, 'is_folder', False):
             return "folder-icon"
 
-        ext = result.extension.lower() if result.extension else ""
+        ext = (self._get_attr(result, 'extension', '') or '').lower()
 
         if ext in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp"]:
             return "image-icon"

@@ -35,28 +35,35 @@ class CSVExporter(BaseExporter):
     - Batch writing for large datasets
     """
 
-    def __init__(self, config: Optional[ExportConfig] = None):
+    def __init__(self, config: Optional[ExportConfig] = None, delimiter: str = ",", **kwargs):
         """
         Initialize CSV exporter.
 
         Args:
             config: Export configuration
+            delimiter: CSV delimiter (default: comma)
+            **kwargs: Additional options
         """
+        # Handle direct keyword arguments
+        if config is None:
+            options = {"delimiter": delimiter, **kwargs}
+            config = ExportConfig(options=options, overwrite=True)
         super().__init__(config)
 
         # CSV-specific options
-        self.delimiter = self.config.options.get("delimiter", ",")
+        self.delimiter = delimiter if delimiter != "," else self.config.options.get("delimiter", ",")
         self.quotechar = self.config.options.get("quotechar", '"')
         self.encoding = self.config.options.get("encoding", "utf-8-sig")  # BOM for Excel
         self.line_terminator = self.config.options.get("line_terminator", "\n")
         self.excel_compatible = self.config.options.get("excel_compatible", True)
 
-    def export(self, results: List) -> ExportStats:
+    def export(self, results: List, output_path: Optional[str] = None) -> ExportStats:
         """
         Export results to CSV file.
 
         Args:
             results: Search results to export
+            output_path: Optional output file path (overrides config)
 
         Returns:
             Export statistics
@@ -65,6 +72,10 @@ class CSVExporter(BaseExporter):
             ExportError: If export fails
         """
         start_time = time.time()
+
+        # Use provided output_path or fall back to config
+        if output_path:
+            self.config.output_path = Path(output_path)
 
         # Validate output path
         if not self.config.output_path:

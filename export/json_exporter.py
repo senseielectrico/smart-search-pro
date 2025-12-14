@@ -35,29 +35,36 @@ class JSONExporter(BaseExporter):
     - Schema validation (optional)
     """
 
-    def __init__(self, config: Optional[ExportConfig] = None):
+    def __init__(self, config: Optional[ExportConfig] = None, indent: int = 2, **kwargs):
         """
         Initialize JSON exporter.
 
         Args:
             config: Export configuration
+            indent: JSON indentation (default: 2)
+            **kwargs: Additional options
         """
+        # Handle direct keyword arguments
+        if config is None:
+            options = {"indent": indent, **kwargs}
+            config = ExportConfig(options=options, overwrite=True)
         super().__init__(config)
 
         # JSON-specific options
         self.pretty = self.config.options.get("pretty", True)
-        self.indent = self.config.options.get("indent", 2)
+        self.indent = indent if indent != 2 else self.config.options.get("indent", 2)
         self.include_metadata = self.config.options.get("include_metadata", True)
         self.jsonl = self.config.options.get("jsonl", False)  # JSON Lines format
         self.sort_keys = self.config.options.get("sort_keys", False)
         self.ensure_ascii = self.config.options.get("ensure_ascii", False)
 
-    def export(self, results: List) -> ExportStats:
+    def export(self, results: List, output_path: Optional[str] = None) -> ExportStats:
         """
         Export results to JSON file.
 
         Args:
             results: Search results to export
+            output_path: Optional output file path (overrides config)
 
         Returns:
             Export statistics
@@ -66,6 +73,10 @@ class JSONExporter(BaseExporter):
             ExportError: If export fails
         """
         start_time = time.time()
+
+        # Use provided output_path or fall back to config
+        if output_path:
+            self.config.output_path = Path(output_path)
 
         # Validate output path
         if not self.config.output_path:
@@ -170,7 +181,7 @@ class JSONExporter(BaseExporter):
         Returns:
             JSON-serializable value
         """
-        value = getattr(result, column, None)
+        value = self._get_attr(result, column, None)
 
         # Keep numeric timestamps for JSON (easier to parse)
         if column in ["date_created", "date_modified", "date_accessed"]:
@@ -202,13 +213,13 @@ class JSONExporter(BaseExporter):
         """
         from datetime import datetime
 
-        total_size = sum(r.size for r in results if not r.is_folder)
+        total_size = sum(self._get_attr(r, 'size', 0) for r in results if not self._get_attr(r, 'is_folder', False))
 
         return {
             "export_date": datetime.now().isoformat(),
             "total_results": len(results),
-            "total_files": sum(1 for r in results if not r.is_folder),
-            "total_folders": sum(1 for r in results if r.is_folder),
+            "total_files": sum(1 for r in results if not self._get_attr(r, "is_folder", False)),
+            "total_folders": sum(1 for r in results if self._get_attr(r, "is_folder", False)),
             "total_size_bytes": total_size,
             "columns": self.config.columns,
             "format_version": "1.0"

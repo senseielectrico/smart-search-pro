@@ -16,7 +16,10 @@ class TestQueryParser:
     def test_parse_simple_query(self, test_query_parser):
         """Test parsing simple text query"""
         parsed = test_query_parser.parse("test file")
-        assert 'test' in parsed.keywords or 'file' in parsed.keywords
+        # Keywords can be stored as single string or split - check for either format
+        assert len(parsed.keywords) > 0
+        keywords_str = ' '.join(parsed.keywords).lower()
+        assert 'test' in keywords_str or 'file' in keywords_str
 
     def test_parse_extension_filter(self, test_query_parser):
         """Test parsing extension filters"""
@@ -66,10 +69,16 @@ class TestFilterChain:
 
     def test_size_filter(self, test_filter_chain):
         """Test size filtering"""
-        from search.filters import SizeFilter
+        from search.filters import SizeFilterImpl
+        from search.query_parser import SizeFilter, SizeOperator
         from search.engine import SearchResult
 
-        test_filter_chain.add(SizeFilter(min_size=1000, max_size=2000))
+        # Create size filters for min_size=1000 and max_size=2000
+        size_filters = [
+            SizeFilter(operator=SizeOperator.GREATER_EQUAL, value=1000, unit="b"),
+            SizeFilter(operator=SizeOperator.LESS_EQUAL, value=2000, unit="b")
+        ]
+        test_filter_chain.add_filter(SizeFilterImpl(size_filters))
 
         result_match = SearchResult(
             filename="test.txt",
@@ -89,10 +98,10 @@ class TestFilterChain:
 
     def test_extension_filter(self, test_filter_chain):
         """Test extension filtering"""
-        from search.filters import ExtensionFilter
+        from search.filters import FileTypeFilter
         from search.engine import SearchResult
 
-        test_filter_chain.add(ExtensionFilter(extensions=['pdf', 'docx']))
+        test_filter_chain.add_filter(FileTypeFilter(extensions={'pdf', 'docx'}))
 
         result_match = SearchResult(
             filename="document.pdf",
@@ -216,7 +225,8 @@ class TestSearchIntegration:
     def test_search_with_filters(self, mock_sdk, mock_search_results):
         """Test search with filter chain"""
         from search.engine import SearchEngine
-        from search.filters import SizeFilter, FilterChain
+        from search.filters import SizeFilterImpl, FilterChain
+        from search.query_parser import SizeFilter, SizeOperator
 
         mock_sdk.return_value.is_available = True
         mock_sdk.return_value.search.return_value = mock_search_results
@@ -224,9 +234,10 @@ class TestSearchIntegration:
         engine = SearchEngine()
         results = engine.search("test")
 
-        # Apply additional filtering
+        # Apply additional filtering with proper API
         filter_chain = FilterChain()
-        filter_chain.add(SizeFilter(min_size=1000))
+        size_filters = [SizeFilter(operator=SizeOperator.GREATER_EQUAL, value=1000, unit="b")]
+        filter_chain.add_filter(SizeFilterImpl(size_filters))
         filtered = [r for r in results if filter_chain.matches(r)]
 
         assert isinstance(filtered, list)

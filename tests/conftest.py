@@ -62,8 +62,17 @@ def temp_db(temp_dir):
     """Create temporary SQLite database"""
     db_path = os.path.join(temp_dir, "test.db")
     yield db_path
+    # On Windows, SQLite may hold file locks; use retry with delay
     if os.path.exists(db_path):
-        os.remove(db_path)
+        import gc
+        gc.collect()  # Force garbage collection to close any lingering connections
+        for attempt in range(5):
+            try:
+                os.remove(db_path)
+                break
+            except PermissionError:
+                time.sleep(0.1 * (attempt + 1))
+        # If still exists, let temp_dir cleanup handle it (ignore_errors=True)
 
 
 @pytest.fixture
@@ -286,17 +295,16 @@ def test_file_copier():
 def test_file_mover():
     """Initialize FileMover for testing"""
     from operations.mover import FileMover
-    mover = FileMover(max_workers=2)
-    mover.start()
+    mover = FileMover(verify_after_move=False)
     yield mover
-    mover.shutdown()
+    mover.cleanup()
 
 
 @pytest.fixture
 def test_operation_manager(temp_dir):
-    """Initialize OperationManager for testing"""
-    from operations.manager import OperationManager
-    manager = OperationManager(history_db=os.path.join(temp_dir, "ops.db"))
+    """Initialize OperationsManager for testing"""
+    from operations.manager import OperationsManager
+    manager = OperationsManager(history_file=os.path.join(temp_dir, "ops.json"))
     yield manager
     manager.shutdown()
 
@@ -351,16 +359,16 @@ def sample_export_data():
 
 @pytest.fixture
 def test_text_preview():
-    """Initialize TextPreview for testing"""
-    from preview.text_preview import TextPreview
-    return TextPreview()
+    """Initialize TextPreviewer for testing"""
+    from preview.text_preview import TextPreviewer
+    return TextPreviewer()
 
 
 @pytest.fixture
 def test_image_preview():
-    """Initialize ImagePreview for testing"""
-    from preview.image_preview import ImagePreview
-    return ImagePreview()
+    """Initialize ImagePreviewer for testing"""
+    from preview.image_preview import ImagePreviewer
+    return ImagePreviewer()
 
 
 @pytest.fixture

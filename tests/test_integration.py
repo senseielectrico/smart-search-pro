@@ -80,8 +80,8 @@ class TestEndToEndWorkflows:
 
     def test_search_filter_export_workflow(self, temp_dir):
         """Test search with filtering and export"""
-        from search.query_parser import QueryParser
-        from search.filters import SizeFilter, FilterChain
+        from search.query_parser import QueryParser, SizeFilter, SizeOperator
+        from search.filters import SizeFilterImpl, FilterChain
         from export.csv_exporter import CSVExporter
 
         # Parse query with filters
@@ -90,7 +90,8 @@ class TestEndToEndWorkflows:
 
         # Apply filters to mock results
         filter_chain = FilterChain()
-        filter_chain.add(SizeFilter(min_size=1024*1024))
+        size_filters = [SizeFilter(operator=SizeOperator.GREATER_EQUAL, value=1024*1024, unit="b")]
+        filter_chain.add_filter(SizeFilterImpl(size_filters))
 
         mock_results = [
             {'filename': 'large.pdf', 'size': 2048*1024, 'path': '/test'},
@@ -162,21 +163,20 @@ class TestDatabaseIntegration:
 
         assert len(operations) > 0
 
-    def test_hash_cache_integration(self, test_database, test_hash_cache, sample_files):
+    def test_hash_cache_integration(self, test_hash_cache, sample_files):
         """Test hash cache with database backend"""
         if len(sample_files) > 0:
             file_path = sample_files[0]
             test_hash = "test_hash_123"
-            file_size = os.path.getsize(file_path)
-            modified_time = os.path.getmtime(file_path)
 
-            # Cache hash
-            test_hash_cache.set(file_path, test_hash, file_size, modified_time)
+            # Cache hash using correct API
+            test_hash_cache.set_hash(file_path, quick_hash=test_hash)
 
             # Retrieve hash
-            cached_hash = test_hash_cache.get(file_path, file_size, modified_time)
+            cached_data = test_hash_cache.get_hash(file_path)
 
-            assert cached_hash == test_hash
+            assert cached_data is not None
+            assert cached_data.get('quick_hash') == test_hash
 
 
 @pytest.mark.integration
@@ -201,10 +201,10 @@ class TestCacheIntegration:
 
     def test_preview_cache_integration(self, test_cache, sample_text_file):
         """Test caching preview data"""
-        from preview.text_preview import TextPreview
+        from preview.text_preview import TextPreviewer
 
-        previewer = TextPreview()
-        preview_data = previewer.generate_preview(sample_text_file, max_lines=10)
+        previewer = TextPreviewer()
+        preview_data = previewer.generate_preview(sample_text_file)
 
         # Cache preview
         cache_key = f"preview:{sample_text_file}"

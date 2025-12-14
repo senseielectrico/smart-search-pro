@@ -234,7 +234,9 @@ class TestExportIntegration:
         assert os.path.exists(output_file)
         with open(output_file, 'r', encoding='utf-8') as f:
             loaded = json.load(f)
-            assert len(loaded) == 1000
+            # JSON export includes metadata and results keys
+            results = loaded.get('results', loaded) if isinstance(loaded, dict) else loaded
+            assert len(results) == 1000
 
     def test_export_with_special_characters(self, temp_dir):
         """Test exporting data with special characters"""

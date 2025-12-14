@@ -64,12 +64,13 @@ class ExcelExporter(BaseExporter):
         self.add_hyperlinks = self.config.options.get("add_hyperlinks", True)
         self.max_rows_per_sheet = self.config.options.get("max_rows_per_sheet", 1000000)
 
-    def export(self, results: List) -> ExportStats:
+    def export(self, results: List, output_path: Optional[str] = None) -> ExportStats:
         """
         Export results to Excel file.
 
         Args:
             results: Search results to export
+            output_path: Optional output file path (overrides config)
 
         Returns:
             Export statistics
@@ -78,6 +79,10 @@ class ExcelExporter(BaseExporter):
             ExportError: If export fails
         """
         start_time = time.time()
+
+        # Use provided output_path or fall back to config
+        if output_path:
+            self.config.output_path = Path(output_path)
 
         # Validate output path
         if not self.config.output_path:
@@ -134,11 +139,12 @@ class ExcelExporter(BaseExporter):
 
         for result in results:
             if self.split_by == "extension":
-                key = result.extension.upper() if result.extension else "NO_EXT"
+                ext = self._get_attr(result, "extension", "")
+                key = ext.upper() if ext else "NO_EXT"
             elif self.split_by == "folder":
-                key = Path(result.path).name or "ROOT"
+                key = Path(self._get_attr(result, "path", "")).name or "ROOT"
             elif self.split_by == "type":
-                key = "Folders" if result.is_folder else "Files"
+                key = "Folders" if self._get_attr(result, "is_folder", False) else "Files"
             else:
                 key = "All"
 
@@ -205,13 +211,14 @@ class ExcelExporter(BaseExporter):
         ws = wb.create_sheet(title="Summary", index=0)
 
         # Calculate statistics
-        total_files = sum(1 for r in results if not r.is_folder)
-        total_folders = sum(1 for r in results if r.is_folder)
-        total_size = sum(r.size for r in results if not r.is_folder)
+        total_files = sum(1 for r in results if not self._get_attr(r, 'is_folder', False))
+        total_folders = sum(1 for r in results if self._get_attr(r, 'is_folder', False))
+        total_size = sum(self._get_attr(r, 'size', 0) for r in results if not self._get_attr(r, 'is_folder', False))
         extensions = defaultdict(int)
         for r in results:
-            if r.extension:
-                extensions[r.extension.upper()] += 1
+            ext = self._get_attr(r, 'extension', '')
+            if ext:
+                extensions[ext.upper()] += 1
 
         # Write summary
         row = 1

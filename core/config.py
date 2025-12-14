@@ -191,22 +191,90 @@ class IntegrationConfig:
             )
 
 
-@dataclass
 class Config:
-    """Main configuration container."""
+    """Main configuration container with get/set support."""
 
-    database: DatabaseConfig = field(default_factory=DatabaseConfig)
-    cache: CacheConfig = field(default_factory=CacheConfig)
-    search: SearchConfig = field(default_factory=SearchConfig)
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
-    ui: UIConfig = field(default_factory=UIConfig)
-    performance: PerformanceConfig = field(default_factory=PerformanceConfig)
-    integration: IntegrationConfig = field(default_factory=IntegrationConfig)
+    def __init__(
+        self,
+        config_path: Path | str | None = None,
+        database: DatabaseConfig | None = None,
+        cache: CacheConfig | None = None,
+        search: SearchConfig | None = None,
+        logging: LoggingConfig | None = None,
+        ui: UIConfig | None = None,
+        performance: PerformanceConfig | None = None,
+        integration: IntegrationConfig | None = None,
+    ):
+        """Initialize configuration with optional path and sub-configs."""
+        self._config_path: Path | None = Path(config_path) if config_path else None
+        self._custom_values: dict[str, Any] = {}
 
-    version: str = "1.0.0"
-    app_name: str = "Smart Search Pro"
-    data_dir: str = "data"
-    config_file: str = "config.yaml"
+        self.database = database or DatabaseConfig()
+        self.cache = cache or CacheConfig()
+        self.search = search or SearchConfig()
+        self.logging = logging or LoggingConfig()
+        self.ui = ui or UIConfig()
+        self.performance = performance or PerformanceConfig()
+        self.integration = integration or IntegrationConfig()
+
+        self.version: str = "1.0.0"
+        self.app_name: str = "Smart Search Pro"
+        self.data_dir: str = "data"
+        self.config_file: str = "config.yaml"
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Get configuration value by key with dot notation support.
+
+        Args:
+            key: Configuration key (supports dot notation like 'nested.level1.level2')
+            default: Default value if key not found
+
+        Returns:
+            Configuration value or default
+        """
+        # First check custom values
+        if key in self._custom_values:
+            return self._custom_values[key]
+
+        # Handle dot notation for nested access
+        parts = key.split(".")
+        value: Any = self
+
+        for part in parts:
+            if hasattr(value, part):
+                value = getattr(value, part)
+            elif isinstance(value, dict) and part in value:
+                value = value[part]
+            else:
+                return default
+
+        return value
+
+    def set(self, key: str, value: Any) -> None:
+        """
+        Set configuration value by key with dot notation support.
+
+        Args:
+            key: Configuration key (supports dot notation like 'nested.level1.level2')
+            value: Value to set
+        """
+        # Store in custom values for simple retrieval
+        self._custom_values[key] = value
+
+        # Also set on object for non-nested keys
+        parts = key.split(".")
+        if len(parts) == 1:
+            if hasattr(self, key):
+                setattr(self, key, value)
+        else:
+            # For nested keys, build the nested structure
+            current = self._custom_values
+            for part in parts[:-1]:
+                if part not in current or not isinstance(current.get(part), dict):
+                    current[part] = {}
+                current = current[part]
+            current[parts[-1]] = value
 
     def validate(self) -> None:
         """Validate all configuration sections."""
@@ -225,7 +293,22 @@ class Config:
         Returns:
             Dictionary representation
         """
-        return asdict(self)
+        result = {
+            "database": asdict(self.database),
+            "cache": asdict(self.cache),
+            "search": asdict(self.search),
+            "logging": asdict(self.logging),
+            "ui": asdict(self.ui),
+            "performance": asdict(self.performance),
+            "integration": asdict(self.integration),
+            "version": self.version,
+            "app_name": self.app_name,
+            "data_dir": self.data_dir,
+            "config_file": self.config_file,
+        }
+        # Include custom values
+        result.update(self._custom_values)
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
@@ -265,13 +348,17 @@ class Config:
 
         return config
 
-    def save(self, path: Path | str) -> None:
+    def save(self, path: Path | str | None = None) -> None:
         """
         Save configuration to YAML file.
 
         Args:
-            path: Path to configuration file
+            path: Path to configuration file (uses stored path if None)
         """
+        if path is None:
+            if self._config_path is None:
+                raise ConfigLoadError("No path specified and no stored path", {})
+            path = self._config_path
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -291,10 +378,59 @@ class Config:
                 {"path": str(path)},
             ) from e
 
-    @classmethod
-    def load(cls, path: Path | str) -> Self:
+    def load(self, path: Path | str | None = None) -> "Config":
         """
-        Load configuration from YAML file.
+        Load configuration from YAML file (instance method).
+
+        Args:
+            path: Path to configuration file (uses stored path if None)
+
+        Returns:
+            Self for chaining
+
+        Raises:
+            ConfigLoadError: If configuration cannot be loaded
+        """
+        if path is None:
+            path = self._config_path
+        if path is None:
+            return self
+
+        path = Path(path)
+
+        if not path.exists():
+            logger.warning("Config file not found, using defaults", path=str(path))
+            return self
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+
+            if not isinstance(data, dict):
+                raise InvalidConfigError("Configuration must be a dictionary")
+
+            # Load custom values
+            for key, value in data.items():
+                self._custom_values[key] = value
+
+            logger.info("Configuration loaded", path=str(path))
+            return self
+
+        except yaml.YAMLError as e:
+            raise ConfigLoadError(
+                f"Failed to parse YAML: {e}",
+                {"path": str(path)},
+            ) from e
+        except Exception as e:
+            raise ConfigLoadError(
+                f"Failed to load configuration: {e}",
+                {"path": str(path)},
+            ) from e
+
+    @classmethod
+    def load_from_file(cls, path: Path | str) -> "Config":
+        """
+        Load configuration from YAML file (class method).
 
         Args:
             path: Path to configuration file
@@ -309,7 +445,7 @@ class Config:
 
         if not path.exists():
             logger.warning("Config file not found, using defaults", path=str(path))
-            return cls()
+            return cls(config_path=path)
 
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -319,6 +455,7 @@ class Config:
                 raise InvalidConfigError("Configuration must be a dictionary")
 
             config = cls.from_dict(data)
+            config._config_path = path
             config.validate()
 
             logger.info("Configuration loaded", path=str(path))
@@ -424,7 +561,7 @@ def load_config(path: Path | str) -> Config:
         Config instance
     """
     global _config
-    _config = Config.load(path)
+    _config = Config.load_from_file(path)
     return _config
 
 

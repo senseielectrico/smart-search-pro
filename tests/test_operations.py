@@ -58,7 +58,13 @@ class TestFileCopier:
         """Test copying to invalid destination"""
         if len(sample_files) > 0:
             source = sample_files[0]
-            dest = "/invalid/path/that/does/not/exist/file.txt"
+            # Use path with invalid characters for Windows (null bytes, control chars)
+            # or use reserved device name which is invalid on Windows
+            if os.name == 'nt':
+                # On Windows, CON, PRN, AUX, NUL are reserved device names
+                dest = "NUL:\\invalid\\file.txt"
+            else:
+                dest = "/invalid/path/that/does/not/exist/file.txt"
 
             with pytest.raises(Exception):
                 test_file_copier.copy_file(source, dest)
@@ -108,8 +114,9 @@ class TestFileMover:
 
             dest = os.path.join(temp_dir, "moved_file.txt")
 
-            success = test_file_mover.move_file(temp_source, dest)
+            success, error = test_file_mover.move_file(temp_source, dest)
             assert success is True
+            assert error is None
             assert not os.path.exists(temp_source)
             assert os.path.exists(dest)
 
@@ -127,26 +134,31 @@ class TestFileMover:
             def progress_callback(current, total):
                 progress_calls.append((current, total))
 
-            success = test_file_mover.move_file(
+            success, error = test_file_mover.move_file(
                 temp_source, dest, progress_callback=progress_callback
             )
             assert success is True
+            assert error is None
 
     def test_move_nonexistent_file(self, test_file_mover, temp_dir):
         """Test moving non-existent file"""
         source = os.path.join(temp_dir, "nonexistent.txt")
         dest = os.path.join(temp_dir, "dest.txt")
 
-        with pytest.raises(Exception):
-            test_file_mover.move_file(source, dest)
+        success, error = test_file_mover.move_file(source, dest)
+        assert success is False
+        assert error is not None
+        # Error message may be in different languages (e.g., Spanish on Windows)
+        # Just verify we got an error about the file
+        assert len(error) > 0
 
 
 # ============================================================================
 # OPERATION MANAGER TESTS
 # ============================================================================
 
-class TestOperationManager:
-    """Tests for OperationManager class"""
+class TestOperationsManager:
+    """Tests for OperationsManager class"""
 
     def test_manager_initialization(self, test_operation_manager):
         """Test manager initialization"""
@@ -158,7 +170,8 @@ class TestOperationManager:
             source = sample_files[0]
             dest = os.path.join(temp_dir, "managed_copy.txt")
 
-            op_id = test_operation_manager.queue_copy(source, dest)
+            # queue_copy takes lists of paths
+            op_id = test_operation_manager.queue_copy([source], [dest])
             assert op_id is not None
 
     def test_queue_move_operation(self, test_operation_manager, sample_files, temp_dir):
@@ -170,18 +183,19 @@ class TestOperationManager:
 
             dest = os.path.join(temp_dir, "managed_move.txt")
 
-            op_id = test_operation_manager.queue_move(temp_source, dest)
+            # queue_move takes lists of paths
+            op_id = test_operation_manager.queue_move([temp_source], [dest])
             assert op_id is not None
 
-    def test_get_operation_status(self, test_operation_manager, sample_files, temp_dir):
-        """Test getting operation status"""
+    def test_get_operation(self, test_operation_manager, sample_files, temp_dir):
+        """Test getting operation by ID"""
         if len(sample_files) > 0:
             source = sample_files[0]
             dest = os.path.join(temp_dir, "status_test.txt")
 
-            op_id = test_operation_manager.queue_copy(source, dest)
-            status = test_operation_manager.get_operation_status(op_id)
-            assert status is not None
+            op_id = test_operation_manager.queue_copy([source], [dest])
+            operation = test_operation_manager.get_operation(op_id)
+            assert operation is not None
 
     def test_cancel_operation(self, test_operation_manager, sample_files, temp_dir):
         """Test canceling operation"""
@@ -189,7 +203,7 @@ class TestOperationManager:
             source = sample_files[0]
             dest = os.path.join(temp_dir, "cancel_test.txt")
 
-            op_id = test_operation_manager.queue_copy(source, dest)
+            op_id = test_operation_manager.queue_copy([source], [dest])
             result = test_operation_manager.cancel_operation(op_id)
             # Should return True or False depending on timing
             assert isinstance(result, bool)
@@ -199,47 +213,47 @@ class TestOperationManager:
         active = test_operation_manager.get_active_operations()
         assert isinstance(active, list)
 
-    def test_get_history(self, test_operation_manager, sample_files, temp_dir):
-        """Test getting operation history"""
+    def test_get_all_operations(self, test_operation_manager, sample_files, temp_dir):
+        """Test getting all operations"""
         if len(sample_files) > 0:
             source = sample_files[0]
             dest = os.path.join(temp_dir, "history_test.txt")
 
-            test_operation_manager.queue_copy(source, dest)
-            history = test_operation_manager.get_history(limit=10)
-            assert isinstance(history, list)
+            test_operation_manager.queue_copy([source], [dest])
+            operations = test_operation_manager.get_all_operations()
+            assert isinstance(operations, list)
 
 
 # ============================================================================
 # CONFLICT RESOLUTION TESTS
 # ============================================================================
 
-class TestConflictResolution:
-    """Tests for conflict resolution strategies"""
+class TestConflictAction:
+    """Tests for conflict action strategies"""
 
-    def test_skip_strategy(self, temp_dir, sample_files):
-        """Test skip conflict resolution"""
-        from operations.conflicts import ConflictResolution
-
-        if len(sample_files) > 0:
-            strategy = ConflictResolution.SKIP
-            assert strategy.name == 'SKIP'
-
-    def test_overwrite_strategy(self, temp_dir, sample_files):
-        """Test overwrite conflict resolution"""
-        from operations.conflicts import ConflictResolution
+    def test_skip_action(self, temp_dir, sample_files):
+        """Test skip conflict action"""
+        from operations.conflicts import ConflictAction
 
         if len(sample_files) > 0:
-            strategy = ConflictResolution.OVERWRITE
-            assert strategy.name == 'OVERWRITE'
+            action = ConflictAction.SKIP
+            assert action.name == 'SKIP'
 
-    def test_rename_strategy(self, temp_dir, sample_files):
-        """Test rename conflict resolution"""
-        from operations.conflicts import ConflictResolution
+    def test_overwrite_action(self, temp_dir, sample_files):
+        """Test overwrite conflict action"""
+        from operations.conflicts import ConflictAction
 
         if len(sample_files) > 0:
-            strategy = ConflictResolution.RENAME
-            assert strategy.name == 'RENAME'
+            action = ConflictAction.OVERWRITE
+            assert action.name == 'OVERWRITE'
+
+    def test_rename_action(self, temp_dir, sample_files):
+        """Test rename conflict action"""
+        from operations.conflicts import ConflictAction
+
+        if len(sample_files) > 0:
+            action = ConflictAction.RENAME
+            assert action.name == 'RENAME'
 
 
 # ============================================================================
@@ -275,13 +289,11 @@ class TestOperationsIntegration:
     def test_batch_operations(self, test_operation_manager, sample_files, temp_dir):
         """Test batch copy operations"""
         if len(sample_files) >= 3:
-            op_ids = []
-            for i, source in enumerate(sample_files[:3]):
-                dest = os.path.join(temp_dir, f"batch_{i}.txt")
-                op_id = test_operation_manager.queue_copy(source, dest)
-                op_ids.append(op_id)
-
-            assert len(op_ids) == 3
+            # Queue a batch copy with multiple files
+            sources = sample_files[:3]
+            dests = [os.path.join(temp_dir, f"batch_{i}.txt") for i in range(3)]
+            op_id = test_operation_manager.queue_copy(sources, dests)
+            assert op_id is not None
 
     def test_operation_retry(self, test_file_copier, temp_dir):
         """Test operation retry on failure"""

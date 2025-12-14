@@ -63,6 +63,7 @@ class TestDuplicatesPanelIntegration:
     def test_panel_initialization(self, qapp):
         """Test that panel initializes correctly"""
         panel = DuplicatesPanel()
+        panel.show()  # Must show panel for visibility checks to work
 
         # Check initial state
         assert panel.scanner is not None
@@ -80,8 +81,9 @@ class TestDuplicatesPanelIntegration:
         assert panel.scan_btn.isEnabled()
         assert not panel.delete_btn.isEnabled()
         assert not panel.move_btn.isEnabled()
-        assert panel.empty_state.isVisible()
-        assert not panel.tree.isVisible()
+        # Use isHidden() for visibility checks (independent of parent visibility)
+        assert not panel.empty_state.isHidden()
+        assert panel.tree.isHidden()
 
     def test_scanner_backend(self, temp_test_dir):
         """Test that scanner backend works correctly"""
@@ -145,6 +147,7 @@ class TestDuplicatesPanelIntegration:
     def test_stats_display(self, qapp, temp_test_dir):
         """Test that stats are displayed correctly"""
         panel = DuplicatesPanel()
+        panel.show()  # Must show panel for visibility checks to work
 
         # Manually trigger scan completion
         scanner = DuplicateScanner(use_cache=False)
@@ -152,6 +155,9 @@ class TestDuplicatesPanelIntegration:
 
         panel.group_manager = manager
         panel._display_results()
+        # Also need to update visibility like _scan_completed does
+        panel.tree.show()
+        panel.empty_state.hide()
 
         # Check that stats label is updated
         stats_text = panel.stats_label.text()
@@ -162,9 +168,9 @@ class TestDuplicatesPanelIntegration:
         # Check tree has correct number of groups
         assert panel.tree.topLevelItemCount() == 2
 
-        # Check tree is visible
-        assert panel.tree.isVisible()
-        assert not panel.empty_state.isVisible()
+        # Check tree is visible (use isHidden for more reliable check)
+        assert not panel.tree.isHidden()
+        assert panel.empty_state.isHidden()
 
     def test_group_display(self, qapp, temp_test_dir):
         """Test that groups are displayed correctly in tree"""

@@ -143,11 +143,12 @@ class TestPathTraversalPrevention:
 
         for protected_path in PROTECTED_PATHS:
             # Intentar copiar A path protegido debe fallar
-            with pytest.raises(Exception):
-                ops.copy_file(
-                    "C:\\Temp\\test.txt",
-                    os.path.join(protected_path, "malicious.exe")
-                )
+            # copy_file returns False instead of raising an exception
+            success = ops.copy_file(
+                "C:\\Temp\\test.txt",
+                os.path.join(protected_path, "malicious.exe")
+            )
+            assert success is False
 
     def test_relative_path_resolution(self):
         """Test: Paths relativos son manejados"""

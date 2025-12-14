@@ -123,6 +123,9 @@ class ConnectionPool:
 
             yield conn
 
+        except sqlite3.Error:
+            # Let sqlite3 errors propagate to be handled by callers
+            raise
         except Exception as e:
             if isinstance(e, ConnectionError):
                 raise
