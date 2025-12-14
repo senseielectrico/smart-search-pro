@@ -37,6 +37,7 @@ from core.security import (
     validate_search_input,
     sanitize_cli_argument,
     validate_subprocess_path,
+    validate_safe_file_type,
     log_security_event,
     SecurityEvent
 )
@@ -127,7 +128,15 @@ class SearchResult:
 
 @dataclass
 class SearchQuery:
-    """Representa una consulta de búsqueda"""
+    """Representa una consulta de búsqueda con validación de seguridad."""
+
+    # Limits for security and performance
+    MAX_KEYWORD_LENGTH: int = field(default=200, repr=False, init=False)
+    MAX_KEYWORDS: int = field(default=10, repr=False, init=False)
+    MAX_SEARCH_PATHS: int = field(default=20, repr=False, init=False)
+    MAX_RESULTS_LIMIT: int = field(default=10000, repr=False, init=False)
+    MIN_KEYWORD_LENGTH: int = field(default=1, repr=False, init=False)
+
     keywords: List[str]
     search_paths: Optional[List[str]] = None
     search_content: bool = False
@@ -137,16 +146,84 @@ class SearchQuery:
     recursive: bool = True
 
     def __post_init__(self):
-        """Validación y normalización"""
+        """Validación y normalización con controles de seguridad."""
+        # 1. Validate keywords exist
         if not self.keywords:
             raise ValueError("Se requiere al menos una palabra clave")
 
-        # Normalizar wildcards
-        self.keywords = [kw.strip() for kw in self.keywords if kw.strip()]
+        # 2. Normalize and validate keywords
+        normalized_keywords = []
+        for kw in self.keywords:
+            kw = kw.strip()
+            if not kw:
+                continue
 
-        # Si no se especifican paths, buscar en todo el sistema
-        if not self.search_paths:
+            # Check keyword length
+            if len(kw) > self.MAX_KEYWORD_LENGTH:
+                raise ValueError(
+                    f"Palabra clave demasiado larga: {len(kw)} > {self.MAX_KEYWORD_LENGTH}"
+                )
+
+            if len(kw) < self.MIN_KEYWORD_LENGTH:
+                continue  # Skip empty/too short keywords
+
+            normalized_keywords.append(kw)
+
+        # 3. Validate keyword count
+        if len(normalized_keywords) > self.MAX_KEYWORDS:
+            raise ValueError(
+                f"Demasiadas palabras clave: {len(normalized_keywords)} > {self.MAX_KEYWORDS}"
+            )
+
+        if not normalized_keywords:
+            raise ValueError("Se requiere al menos una palabra clave válida")
+
+        self.keywords = normalized_keywords
+
+        # 4. Validate and normalize search paths
+        if self.search_paths:
+            if len(self.search_paths) > self.MAX_SEARCH_PATHS:
+                raise ValueError(
+                    f"Demasiadas rutas de búsqueda: {len(self.search_paths)} > {self.MAX_SEARCH_PATHS}"
+                )
+
+            validated_paths = []
+            for path in self.search_paths:
+                path = path.strip()
+                if not path:
+                    continue
+
+                # Normalize path (resolve .. and other path tricks)
+                try:
+                    normalized = os.path.normpath(os.path.abspath(path))
+                    # Check for path traversal attempts
+                    if '..' in path:
+                        log_security_event(
+                            SecurityEvent.PATH_TRAVERSAL_ATTEMPT,
+                            {'path': path, 'normalized': normalized},
+                            severity="WARNING"
+                        )
+                    validated_paths.append(normalized)
+                except Exception as e:
+                    logger.warning(f"Invalid search path ignored: {path} - {e}")
+                    continue
+
+            self.search_paths = validated_paths if validated_paths else self._get_default_search_paths()
+        else:
             self.search_paths = self._get_default_search_paths()
+
+        # 5. Validate max_results bounds
+        if self.max_results < 1:
+            self.max_results = 1
+        elif self.max_results > self.MAX_RESULTS_LIMIT:
+            logger.warning(
+                f"max_results capped from {self.max_results} to {self.MAX_RESULTS_LIMIT}"
+            )
+            self.max_results = self.MAX_RESULTS_LIMIT
+
+        # 6. Ensure at least one search mode is enabled
+        if not self.search_filename and not self.search_content:
+            self.search_filename = True  # Default to filename search
 
     @staticmethod
     def _get_default_search_paths() -> List[str]:
@@ -465,7 +542,15 @@ class WindowsSearchEngine:
 
 
 class FallbackSearchEngine:
-    """Motor de búsqueda alternativo usando sistema de archivos"""
+    """
+    Motor de búsqueda alternativo usando sistema de archivos.
+
+    OPTIMIZADO: Usa os.scandir() en lugar de os.walk() para evitar
+    llamadas redundantes a os.stat() (patrón N+1).
+    """
+
+    # Batch size for callback notifications (reduces callback overhead)
+    BATCH_SIZE: int = 50
 
     def search(
         self,
@@ -473,16 +558,17 @@ class FallbackSearchEngine:
         callback: Optional[Callable[[SearchResult], None]] = None
     ) -> List[SearchResult]:
         """
-        Búsqueda manual del sistema de archivos
+        Búsqueda manual del sistema de archivos optimizada.
 
         Args:
             query: Objeto SearchQuery
-            callback: Callback opcional
+            callback: Callback opcional para cada resultado
 
         Returns:
             Lista de SearchResult
         """
         results = []
+        results_count = 0
 
         for search_path in query.search_paths or []:
             if not os.path.exists(search_path):
@@ -490,92 +576,139 @@ class FallbackSearchEngine:
                 continue
 
             try:
-                results.extend(
-                    self._search_directory(search_path, query, callback)
-                )
+                # Use optimized scandir-based search
+                for result in self._scandir_search(search_path, query):
+                    results.append(result)
+                    results_count += 1
+
+                    if callback:
+                        callback(result)
+
+                    # Early termination if max results reached
+                    if results_count >= query.max_results:
+                        break
+
+                if results_count >= query.max_results:
+                    break
+
             except Exception as e:
                 logger.error(f"Error buscando en {search_path}: {e}")
 
-        # Limitar resultados
-        results = results[:query.max_results]
-
-        # Ordenar por fecha modificación
+        # Sort by modification date (most recent first)
         results.sort(key=lambda r: r.modified or datetime.min, reverse=True)
 
         return results
 
-    def _search_directory(
+    def _scandir_search(
         self,
         path: str,
-        query: SearchQuery,
-        callback: Optional[Callable]
-    ) -> List[SearchResult]:
-        """Busca recursivamente en un directorio"""
-        results = []
+        query: SearchQuery
+    ):
+        """
+        Generator que busca archivos usando os.scandir() recursivamente.
 
-        try:
-            for root, dirs, files in os.walk(path):
-                # Buscar en archivos
-                for filename in files:
-                    if self._matches_query(filename, query):
-                        full_path = os.path.join(root, filename)
-                        result = self._create_result(full_path, filename)
+        PERFORMANCE: os.scandir() es 2-20x más rápido que os.walk() porque:
+        - Obtiene stat info durante el listado (sin llamadas extra)
+        - Es un generator, no carga todo en memoria
+        - Maneja permisos denegados de forma granular
+        """
+        dirs_to_process = [path]
 
-                        if result:
-                            results.append(result)
+        while dirs_to_process:
+            current_dir = dirs_to_process.pop(0)
 
-                            if callback:
-                                callback(result)
+            try:
+                with os.scandir(current_dir) as entries:
+                    subdirs = []
 
-                            # Limitar resultados
-                            if len(results) >= query.max_results:
-                                return results
+                    for entry in entries:
+                        try:
+                            # Skip symlinks to avoid infinite loops
+                            if entry.is_symlink():
+                                continue
 
-                # Si no es recursivo, no continuar
-                if not query.recursive:
-                    break
+                            if entry.is_file(follow_symlinks=False):
+                                # Check if matches query
+                                if self._matches_query(entry.name, query):
+                                    result = self._create_result_from_entry(entry)
+                                    if result:
+                                        yield result
 
-        except PermissionError:
-            logger.warning(f"Permiso denegado: {path}")
-        except Exception as e:
-            logger.error(f"Error en {path}: {e}")
+                            elif entry.is_dir(follow_symlinks=False) and query.recursive:
+                                subdirs.append(entry.path)
 
-        return results
+                        except (PermissionError, OSError) as e:
+                            # Individual entry error - skip and continue
+                            logger.debug(f"Cannot access {entry.path}: {e}")
+                            continue
+
+                    # Add subdirs to process (breadth-first for better cache locality)
+                    dirs_to_process.extend(subdirs)
+
+            except PermissionError:
+                logger.debug(f"Permiso denegado: {current_dir}")
+            except OSError as e:
+                logger.warning(f"Error accediendo a {current_dir}: {e}")
 
     @staticmethod
     def _matches_query(filename: str, query: SearchQuery) -> bool:
-        """Verifica si un archivo coincide con la query"""
+        """Verifica si un archivo coincide con la query."""
         if not query.search_filename:
             return False
 
         filename_lower = filename.lower()
 
-        # Verificar cada keyword
+        # Check each keyword
         for keyword in query.keywords:
-            # Convertir * a patrón simple
-            pattern = keyword.lower().replace('*', '')
+            # Handle wildcards: * matches any characters
+            pattern = keyword.lower()
 
-            if pattern in filename_lower:
-                return True
+            if '*' in pattern:
+                # Simple wildcard matching
+                parts = pattern.split('*')
+                pos = 0
+                match = True
+
+                for part in parts:
+                    if not part:
+                        continue
+                    idx = filename_lower.find(part, pos)
+                    if idx == -1:
+                        match = False
+                        break
+                    pos = idx + len(part)
+
+                if match:
+                    return True
+            else:
+                # Simple substring match
+                if pattern in filename_lower:
+                    return True
 
         return False
 
     @staticmethod
-    def _create_result(path: str, filename: str) -> Optional[SearchResult]:
-        """Crea un SearchResult desde un path"""
+    def _create_result_from_entry(entry: os.DirEntry) -> Optional[SearchResult]:
+        """
+        Crea un SearchResult desde un DirEntry.
+
+        PERFORMANCE: Usa entry.stat() que es cached por os.scandir(),
+        evitando llamadas extra al sistema de archivos.
+        """
         try:
-            stat = os.stat(path)
+            # Use cached stat from DirEntry (no extra syscall)
+            stat_info = entry.stat(follow_symlinks=False)
 
             return SearchResult(
-                path=path,
-                name=filename,
-                size=stat.st_size,
-                modified=datetime.fromtimestamp(stat.st_mtime),
-                created=datetime.fromtimestamp(stat.st_ctime),
-                is_directory=os.path.isdir(path)
+                path=entry.path,
+                name=entry.name,
+                size=stat_info.st_size,
+                modified=datetime.fromtimestamp(stat_info.st_mtime),
+                created=datetime.fromtimestamp(stat_info.st_ctime),
+                is_directory=False  # We only call this for files
             )
-        except Exception as e:
-            logger.warning(f"Error creando resultado para {path}: {e}")
+        except (OSError, ValueError) as e:
+            logger.debug(f"Error creando resultado para {entry.path}: {e}")
             return None
 
 
@@ -663,23 +796,37 @@ class FileOperations:
     @staticmethod
     def open_file(path: str) -> bool:
         """
-        Abre un archivo con la aplicación predeterminada
+        Abre un archivo con la aplicación predeterminada.
+
+        SECURITY: Valida el tipo de archivo para prevenir ejecución de
+        archivos maliciosos (.exe, .bat, .cmd, .vbs, etc.).
 
         Args:
             path: Path del archivo
 
         Returns:
             True si éxito
+
+        Raises:
+            FileNotFoundError: Si el archivo no existe
+            PermissionError: Si el tipo de archivo es peligroso
         """
         try:
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"Archivo no existe: {path}")
+            # SECURITY FIX CVE-SSP-002: Validar tipo de archivo antes de abrir
+            # Esto previene command injection via archivos ejecutables
+            validate_safe_file_type(path)
 
             # Usar el comando de Windows para abrir
             os.startfile(path)
             logger.info(f"Abierto: {path}")
             return True
 
+        except PermissionError as e:
+            # Log security event and re-raise with user-friendly message
+            logger.warning(f"Blocked opening dangerous file: {path} - {e}")
+            raise
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Archivo no existe: {path}")
         except Exception as e:
             logger.error(f"Error abriendo {path}: {e}")
             raise

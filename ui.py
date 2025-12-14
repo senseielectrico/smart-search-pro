@@ -42,6 +42,9 @@ class FileOperation(Enum):
 # Importar utilidades compartidas
 from utils import format_file_size
 
+# Importar validación de seguridad para apertura de archivos
+from core.security import validate_safe_file_type
+
 # Importar sistema unificado de categorías
 try:
     from categories import FileCategory as FileType, classify_by_extension
@@ -513,32 +516,57 @@ class SmartSearchWindow(QMainWindow):
         self.status_bar.showMessage("Ready")
 
     def _create_search_bar(self) -> QHBoxLayout:
-        """Create top search bar with controls"""
+        """Create top search bar with controls and accessibility features."""
         layout = QHBoxLayout()
 
-        # Search input
+        # Search input with accessibility
         search_label = QLabel("Search:")
+        search_label.setAccessibleName("Search label")
         layout.addWidget(search_label)
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Enter filename or pattern...")
+        self.search_input.setPlaceholderText("Enter filename or pattern (use * as wildcard)...")
+        self.search_input.setAccessibleName("Search input")
+        self.search_input.setAccessibleDescription(
+            "Enter search terms. Use asterisk for wildcards. Press Enter to search."
+        )
+        self.search_input.setToolTip(
+            "Enter filename or pattern to search.\n"
+            "Use * as wildcard (e.g., *.txt, report*)\n"
+            "Press Enter or click Search button"
+        )
         self.search_input.returnPressed.connect(self._start_search)
+        # Associate label with input for accessibility
+        search_label.setBuddy(self.search_input)
         layout.addWidget(self.search_input, stretch=3)
 
-        # Case sensitive checkbox
+        # Case sensitive checkbox with accessibility
         self.case_sensitive_cb = QCheckBox("Case Sensitive")
+        self.case_sensitive_cb.setAccessibleName("Case sensitive search toggle")
+        self.case_sensitive_cb.setAccessibleDescription(
+            "When checked, search will match exact letter case"
+        )
+        self.case_sensitive_cb.setToolTip("Enable case-sensitive search matching")
         layout.addWidget(self.case_sensitive_cb)
 
-        # Search button
+        # Search button with accessibility
         self.search_btn = QPushButton("Search")
         self.search_btn.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_FileDialogContentsView))
+        self.search_btn.setAccessibleName("Start search")
+        self.search_btn.setAccessibleDescription("Click to begin searching for files")
+        self.search_btn.setToolTip("Start searching (Enter)")
+        self.search_btn.setShortcut(QKeySequence("Ctrl+Return"))
         self.search_btn.clicked.connect(self._start_search)
         layout.addWidget(self.search_btn)
 
-        # Stop button
+        # Stop button with accessibility
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_BrowserStop))
         self.stop_btn.setEnabled(False)
+        self.stop_btn.setAccessibleName("Stop search")
+        self.stop_btn.setAccessibleDescription("Click to cancel the current search operation")
+        self.stop_btn.setToolTip("Stop current search (Escape)")
+        self.stop_btn.setShortcut(QKeySequence("Escape"))
         self.stop_btn.clicked.connect(self._stop_search)
         layout.addWidget(self.stop_btn)
 
@@ -548,17 +576,27 @@ class SmartSearchWindow(QMainWindow):
         line.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(line)
 
-        # Operation selector
+        # Operation selector with accessibility
         op_label = QLabel("Operation:")
         layout.addWidget(op_label)
 
         self.operation_combo = QComboBox()
         self.operation_combo.addItems(["Copy", "Move"])
+        self.operation_combo.setAccessibleName("File operation selector")
+        self.operation_combo.setAccessibleDescription(
+            "Select whether to copy or move files to destination"
+        )
+        self.operation_combo.setToolTip("Select file operation type for selected files")
+        op_label.setBuddy(self.operation_combo)
         layout.addWidget(self.operation_combo)
 
-        # Theme toggle
+        # Theme toggle with accessibility
         self.theme_btn = QPushButton("Dark Mode")
         self.theme_btn.setCheckable(True)
+        self.theme_btn.setAccessibleName("Toggle dark mode")
+        self.theme_btn.setAccessibleDescription("Switch between light and dark color theme")
+        self.theme_btn.setToolTip("Toggle between light and dark theme (Ctrl+D)")
+        self.theme_btn.setShortcut(QKeySequence("Ctrl+D"))
         self.theme_btn.clicked.connect(self._toggle_theme)
         layout.addWidget(self.theme_btn)
 
@@ -831,8 +869,38 @@ class SmartSearchWindow(QMainWindow):
         self.status_bar.showMessage(f"Search complete. Found {total_files} files.", 5000)
 
     def _on_search_error(self, error_msg: str):
-        """Handle search error"""
-        QMessageBox.critical(self, "Search Error", error_msg)
+        """Handle search error with user-friendly feedback."""
+        # Reset UI state
+        self.search_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.progress_bar.setVisible(False)
+
+        # Provide contextual error message
+        if "permission" in error_msg.lower():
+            detailed_msg = (
+                f"Search encountered a permission error:\n\n{error_msg}\n\n"
+                "Some directories may be protected. Try selecting different folders."
+            )
+        elif "connection" in error_msg.lower() or "windows search" in error_msg.lower():
+            detailed_msg = (
+                f"Windows Search service error:\n\n{error_msg}\n\n"
+                "Please ensure the Windows Search service is running:\n"
+                "1. Press Win+R, type 'services.msc'\n"
+                "2. Find 'Windows Search' and ensure it's running"
+            )
+        elif "timeout" in error_msg.lower():
+            detailed_msg = (
+                f"Search timed out:\n\n{error_msg}\n\n"
+                "Try narrowing your search with more specific terms or fewer directories."
+            )
+        else:
+            detailed_msg = f"An error occurred during search:\n\n{error_msg}"
+
+        QMessageBox.critical(
+            self, "Search Error", detailed_msg,
+            QMessageBox.StandardButton.Ok
+        )
+        self.status_bar.showMessage("Search failed. Ready.", 5000)
 
     def _get_current_table(self) -> Optional[ResultsTableWidget]:
         """Get currently active results table"""
@@ -861,11 +929,16 @@ class SmartSearchWindow(QMainWindow):
         self._open_files_from_list(files)
 
     def _open_files_from_list(self, files: list):
-        """Open files from provided list (can be called from signals)"""
+        """
+        Open files from provided list (can be called from signals).
+
+        SECURITY: Uses validate_safe_file_type to prevent opening
+        potentially dangerous executable files.
+        """
         if not files:
             return
 
-        # Validar que los archivos existen
+        # Validate files exist
         valid_files = []
         for file_path in files:
             if os.path.exists(file_path):
@@ -875,25 +948,52 @@ class SmartSearchWindow(QMainWindow):
             QMessageBox.warning(self, "No Valid Files", "Selected files no longer exist.")
             return
 
-        # Abrir archivos con manejo de errores
+        # Open files with security validation and error handling
         opened_count = 0
         error_count = 0
+        blocked_files = []
 
         for file_path in valid_files[:10]:  # Limit to 10 files
             try:
+                # SECURITY: Validate file type before opening
+                validate_safe_file_type(file_path)
                 os.startfile(file_path)
                 opened_count += 1
+            except PermissionError as e:
+                # File type blocked by security validation
+                blocked_files.append(os.path.basename(file_path))
+                logger.warning(f"Blocked opening file for security: {file_path}")
+            except FileNotFoundError:
+                error_count += 1
+                logger.warning(f"File not found: {file_path}")
             except Exception as e:
                 error_count += 1
                 logger.error(f"Error opening {file_path}: {e}")
 
+        # Show feedback to user
         if len(valid_files) > 10:
-            QMessageBox.information(self, "Too Many Files",
-                                   f"Only opening first 10 of {len(valid_files)} selected files.")
+            QMessageBox.information(
+                self, "Too Many Files",
+                f"Only opening first 10 of {len(valid_files)} selected files."
+            )
 
-        if error_count > 0:
-            QMessageBox.warning(self, "Some Errors",
-                              f"Opened {opened_count} files, {error_count} failed.")
+        if blocked_files:
+            blocked_list = "\n".join(blocked_files[:5])
+            if len(blocked_files) > 5:
+                blocked_list += f"\n... and {len(blocked_files) - 5} more"
+            QMessageBox.warning(
+                self, "Security: Files Blocked",
+                f"The following files were blocked for security reasons "
+                f"(executable/script files cannot be opened directly):\n\n"
+                f"{blocked_list}\n\n"
+                f"Use 'Open Location' to navigate to these files instead."
+            )
+
+        if error_count > 0 and opened_count > 0:
+            QMessageBox.warning(
+                self, "Some Errors",
+                f"Opened {opened_count} files, {error_count} failed to open."
+            )
 
     def _open_location(self):
         """Open file location in Explorer from current table"""

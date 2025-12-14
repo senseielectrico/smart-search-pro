@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 from core.security import (
     validate_path_safety,
     validate_subprocess_path,
+    validate_safe_file_type,
     log_security_event,
     SecurityEvent,
     PROTECTED_PATHS
@@ -642,22 +643,37 @@ class FileOperations:
         """
         Abre un archivo con su aplicación predeterminada.
 
+        SECURITY: Valida el tipo de archivo para prevenir ejecución de
+        archivos maliciosos (.exe, .bat, .cmd, .vbs, etc.).
+
         Args:
             filepath: Ruta del archivo a abrir
 
         Returns:
-            True si se abrió correctamente, False en caso contrario
+            True si se abrió correctamente
+
+        Raises:
+            FileNotFoundError: Si el archivo no existe
+            PermissionError: Si el tipo de archivo es peligroso
         """
         try:
-            if not os.path.exists(filepath):
-                raise FileNotFoundError(f"File not found: {filepath}")
+            # SECURITY FIX CVE-SSP-002: Validar tipo de archivo antes de abrir
+            # Esto previene command injection via archivos ejecutables
+            validate_safe_file_type(filepath)
 
             os.startfile(filepath)
+            logger.info(f"Opened file: {filepath}")
             return True
 
+        except PermissionError as e:
+            # Log security event and re-raise with user-friendly message
+            logger.warning(f"Blocked opening dangerous file: {filepath} - {e}")
+            raise
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File not found: {filepath}")
         except Exception as e:
-            print(f"Error opening file: {e}")
-            return False
+            logger.error(f"Error opening file {filepath}: {e}")
+            raise
 
     @staticmethod
     def open_location(filepath: str) -> bool:

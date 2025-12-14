@@ -70,6 +70,49 @@ MAX_LENGTHS = {
 # Dangerous characters for CLI arguments
 DANGEROUS_CLI_CHARS: List[str] = ['&', '|', ';', '<', '>', '^', '`', '\n', '\r']
 
+# SAFE file extensions for open_file() - prevent command injection via os.startfile()
+# These are document/media types that are safe to open with default applications
+SAFE_FILE_EXTENSIONS: Set[str] = {
+    # Documents
+    '.txt', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+    '.odt', '.ods', '.odp', '.rtf', '.csv', '.tsv',
+    # Images
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.ico', '.svg', '.webp',
+    '.tiff', '.tif', '.raw', '.psd', '.ai', '.eps',
+    # Audio
+    '.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma', '.m4a', '.opus',
+    # Video
+    '.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v',
+    # Archives (view only, not execute)
+    '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',
+    # Code/Text (view only)
+    '.py', '.js', '.ts', '.html', '.css', '.json', '.xml', '.yaml', '.yml',
+    '.md', '.ini', '.cfg', '.conf', '.log', '.sql', '.sh', '.c', '.cpp',
+    '.h', '.hpp', '.java', '.cs', '.go', '.rs', '.rb', '.php', '.swift',
+    # Other safe formats
+    '.epub', '.mobi', '.djvu',
+}
+
+# DANGEROUS file extensions - NEVER allow os.startfile() on these
+DANGEROUS_FILE_EXTENSIONS: Set[str] = {
+    # Executables
+    '.exe', '.com', '.scr', '.pif',
+    # Scripts
+    '.bat', '.cmd', '.ps1', '.psm1', '.vbs', '.vbe', '.js', '.jse',
+    '.ws', '.wsf', '.wsc', '.wsh', '.msc',
+    # Installers
+    '.msi', '.msp', '.msu',
+    # Shortcuts and links
+    '.lnk', '.url', '.scf',
+    # Registry
+    '.reg',
+    # Other dangerous
+    '.hta', '.cpl', '.inf', '.application', '.gadget',
+}
+
+# Note: .js is in DANGEROUS for Windows scripting context but allowed in SAFE for code viewing
+# The check order is: DANGEROUS first (block), then SAFE (allow), else block
+
 
 # ============================================================================
 # SQL INJECTION PREVENTION
@@ -303,6 +346,80 @@ def validate_subprocess_path(path: str) -> Path:
     except Exception as e:
         logger.error(f"Path validation failed: {e}")
         raise
+
+
+def validate_safe_file_type(filepath: str, allow_unknown: bool = False) -> bool:
+    """
+    Validate that a file is safe to open with os.startfile().
+
+    This prevents command injection attacks by blocking executable file types
+    that could run malicious code when opened.
+
+    Args:
+        filepath: Path to the file to validate
+        allow_unknown: If True, allow files with unknown extensions (default: False)
+
+    Returns:
+        True if file is safe to open
+
+    Raises:
+        PermissionError: If file type is dangerous or not allowed
+        FileNotFoundError: If file doesn't exist
+    """
+    path_obj = Path(filepath)
+
+    # Check file exists
+    if not path_obj.exists():
+        raise FileNotFoundError(f"File not found: {filepath}")
+
+    # Directories are safe (opens in explorer)
+    if path_obj.is_dir():
+        return True
+
+    # Get extension (lowercase, with dot)
+    ext = path_obj.suffix.lower()
+
+    # No extension - treat as unknown
+    if not ext:
+        if allow_unknown:
+            return True
+        log_security_event(
+            SecurityEvent.COMMAND_INJECTION_ATTEMPT,
+            {'filepath': filepath, 'reason': 'no_extension'},
+            severity="WARNING"
+        )
+        raise PermissionError(f"Cannot open file without extension for security: {filepath}")
+
+    # Check DANGEROUS extensions first (block even if in safe list somehow)
+    if ext in DANGEROUS_FILE_EXTENSIONS:
+        log_security_event(
+            SecurityEvent.COMMAND_INJECTION_ATTEMPT,
+            {'filepath': filepath, 'extension': ext, 'reason': 'dangerous_extension'},
+            severity="ERROR"
+        )
+        raise PermissionError(
+            f"Cannot open potentially dangerous file type '{ext}': {filepath}. "
+            f"Use 'Open Location' to navigate to the file instead."
+        )
+
+    # Check if extension is in safe list
+    if ext in SAFE_FILE_EXTENSIONS:
+        return True
+
+    # Unknown extension
+    if allow_unknown:
+        logger.warning(f"Opening file with unknown extension: {ext}")
+        return True
+
+    log_security_event(
+        SecurityEvent.COMMAND_INJECTION_ATTEMPT,
+        {'filepath': filepath, 'extension': ext, 'reason': 'unknown_extension'},
+        severity="WARNING"
+    )
+    raise PermissionError(
+        f"Cannot open file with unknown extension '{ext}': {filepath}. "
+        f"Use 'Open Location' to navigate to the file instead."
+    )
 
 
 # ============================================================================
