@@ -3,6 +3,12 @@ Security module for Smart Search Pro.
 
 Provides centralized input validation, sanitization, and security utilities
 to prevent SQL injection, path traversal, command injection, and other attacks.
+
+ROBUSTEZ additions:
+- Unicode normalization for cross-platform compatibility
+- Long path support (>260 chars) for Windows
+- UNC/network path detection and handling
+- Locked file detection utilities
 """
 
 import os
@@ -10,10 +16,205 @@ import re
 import html
 import math
 import logging
+import unicodedata
 from pathlib import Path
-from typing import Any, Optional, List, Set
+from typing import Any, Optional, List, Set, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# ROBUSTNESS: UNICODE AND PATH UTILITIES
+# ============================================================================
+
+def normalize_unicode_path(path: str) -> str:
+    """
+    Normalize Unicode for filesystem/SQL compatibility.
+
+    ROBUSTEZ:
+    - Normalizes to NFC (composed form) preferred by most filesystems
+    - Removes zero-width and control characters that can cause issues
+    - Handles emoji and combining characters
+
+    Args:
+        path: Path string that may contain Unicode characters
+
+    Returns:
+        Normalized path string
+    """
+    if not path:
+        return path
+
+    # Normalize to NFC (composed form) - most filesystems prefer this
+    normalized = unicodedata.normalize('NFC', path)
+
+    # Remove zero-width and control characters (except tab/space)
+    # Categories: Cc=control, Cf=format, Cs=surrogate, Co=private, Cn=unassigned
+    cleaned = ''.join(
+        char for char in normalized
+        if unicodedata.category(char) not in ('Cc', 'Cf', 'Cs', 'Co', 'Cn')
+        or char in (' ', '\t')
+    )
+
+    return cleaned
+
+
+def add_long_path_prefix(path: str) -> str:
+    """
+    Add \\\\?\\ prefix for long path support on Windows.
+
+    Windows traditionally limits paths to 260 characters (MAX_PATH).
+    With the \\\\?\\ prefix, paths up to 32,767 characters are supported.
+
+    Args:
+        path: Path string to potentially prefix
+
+    Returns:
+        Path with long path prefix if needed, otherwise unchanged
+    """
+    if os.name != 'nt':
+        return path  # Only for Windows
+
+    if not path:
+        return path
+
+    # Already has long path prefix
+    if path.startswith('\\\\?\\'):
+        return path
+
+    # Check if path exceeds MAX_PATH
+    if len(path) <= 260:
+        return path
+
+    try:
+        # Convert to absolute path first
+        abs_path = os.path.abspath(path)
+
+        # UNC paths need different prefix
+        if abs_path.startswith('\\\\'):
+            return '\\\\?\\UNC\\' + abs_path[2:]
+
+        return '\\\\?\\' + abs_path
+
+    except Exception as e:
+        logger.warning(f"Could not add long path prefix to {path}: {e}")
+        return path
+
+
+def is_network_path(path: str) -> bool:
+    """
+    Check if path is on a network drive or UNC path.
+
+    ROBUSTEZ: Network paths may have different timeout behavior
+    and require special handling.
+
+    Args:
+        path: Path to check
+
+    Returns:
+        True if path is a network/UNC path
+    """
+    if not path:
+        return False
+
+    # UNC path (starts with \\)
+    if path.startswith('\\\\'):
+        return True
+
+    # Check if drive letter maps to network share
+    if os.name == 'nt' and len(path) >= 2 and path[1] == ':':
+        drive = path[:2]
+        try:
+            import ctypes
+            DRIVE_REMOTE = 4
+            drive_type = ctypes.windll.kernel32.GetDriveTypeW(drive + '\\')
+            return drive_type == DRIVE_REMOTE
+        except Exception:
+            pass
+
+    return False
+
+
+def validate_path_length(path: str, strict: bool = False) -> Tuple[bool, Optional[str]]:
+    """
+    Validate path length against Windows limits.
+
+    Args:
+        path: Path to validate
+        strict: If True, fail on paths >260; if False, allow with prefix
+
+    Returns:
+        Tuple of (is_valid, error_message)
+        error_message is None if valid
+    """
+    if not path:
+        return (True, None)
+
+    path_len = len(path)
+
+    # Absolute Windows limit
+    if path_len > 32767:
+        return (False, f"Path exceeds absolute Windows limit (32767 chars): {path_len}")
+
+    # Traditional MAX_PATH limit
+    if path_len > 260:
+        if strict:
+            return (False, f"Path exceeds MAX_PATH (260 chars): {path_len}")
+        else:
+            # Check if long paths are enabled
+            if os.name == 'nt':
+                try:
+                    import winreg
+                    key = winreg.OpenKey(
+                        winreg.HKEY_LOCAL_MACHINE,
+                        r"SYSTEM\CurrentControlSet\Control\FileSystem"
+                    )
+                    long_paths_enabled, _ = winreg.QueryValueEx(key, "LongPathsEnabled")
+                    winreg.CloseKey(key)
+
+                    if not long_paths_enabled:
+                        logger.warning(
+                            f"Path exceeds MAX_PATH (260) and long paths not enabled. "
+                            f"Consider enabling via registry or using shorter paths."
+                        )
+                except Exception:
+                    pass  # Can't check registry, proceed
+
+    return (True, None)
+
+
+def is_file_locked(filepath: str) -> bool:
+    """
+    Check if a file is locked by another process (Windows).
+
+    ROBUSTEZ: Useful for detecting locked files before operations.
+
+    Args:
+        filepath: Path to file to check
+
+    Returns:
+        True if file appears to be locked
+    """
+    if not os.path.exists(filepath):
+        return False
+
+    if os.name != 'nt':
+        return False  # Only for Windows
+
+    try:
+        # Try to open file exclusively
+        import msvcrt
+        with open(filepath, 'r+b') as f:
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        return False  # File is not locked
+
+    except (IOError, OSError, PermissionError):
+        return True  # File is locked
+
+    except ImportError:
+        # msvcrt not available
+        return False
 
 
 # ============================================================================

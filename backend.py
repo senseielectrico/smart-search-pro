@@ -384,12 +384,26 @@ class SearchQuery:
 # ============================================================================
 
 class WindowsSearchEngine:
-    """Motor de búsqueda usando Windows Search API (COM)"""
+    """
+    Motor de búsqueda usando Windows Search API (COM).
+
+    ROBUSTEZ:
+    - Thread-local COM initialization para seguridad entre hilos
+    - Manejo seguro de campos COM con defaults
+    - Cleanup garantizado de recursos COM en finally blocks
+    - Retry logic para errores transitorios
+    """
+
+    # Retry configuration for transient errors
+    MAX_RETRIES: int = 3
+    RETRY_DELAY: float = 0.5
+
+    # Thread-local storage for COM state
+    _thread_local = threading.local()
 
     def __init__(self):
         """Inicializa el motor de búsqueda"""
         self._validate_dependencies()
-        self._connection = None
         self._lock = threading.Lock()
 
     @staticmethod
@@ -400,10 +414,37 @@ class WindowsSearchEngine:
                 "pywin32 no está instalado. Ejecute: pip install pywin32"
             )
 
+    def _ensure_com_initialized(self) -> bool:
+        """
+        Initialize COM for current thread if not already done.
+
+        Returns:
+            True if COM was initialized by this call (needs cleanup),
+            False if already initialized.
+        """
+        if not getattr(self._thread_local, 'com_initialized', False):
+            pythoncom.CoInitialize()
+            self._thread_local.com_initialized = True
+            return True
+        return False
+
+    def _cleanup_com(self):
+        """Cleanup COM for current thread."""
+        if getattr(self._thread_local, 'com_initialized', False):
+            try:
+                pythoncom.CoUninitialize()
+            except Exception as e:
+                logger.debug(f"Error uninitializing COM: {e}")
+            finally:
+                self._thread_local.com_initialized = False
+
     def _get_connection(self):
-        """Obtiene una conexión ADO para Windows Search"""
-        # Inicializar COM en este thread
-        pythoncom.CoInitialize()
+        """
+        Obtiene una conexión ADO para Windows Search.
+
+        ROBUSTEZ: COM initialization es thread-local y rastreada.
+        """
+        self._ensure_com_initialized()
 
         try:
             # Crear conexión ADO
@@ -421,28 +462,66 @@ class WindowsSearchEngine:
                 "Verifique que el servicio Windows Search esté activo."
             ) from e
 
+    @staticmethod
+    def _get_field_safe(recordset, field_name: str, default=None):
+        """
+        Safely get a field value from ADO recordset.
+
+        ROBUSTEZ: Previene crashes cuando campos están ausentes o corruptos.
+        """
+        try:
+            field = recordset.Fields(field_name)
+            if field is None:
+                return default
+            value = field.Value
+            return value if value is not None else default
+        except Exception as e:
+            logger.debug(f"Field {field_name} unavailable: {e}")
+            return default
+
     def search(
         self,
         query: SearchQuery,
-        callback: Optional[Callable[[SearchResult], None]] = None
+        callback: Optional[Callable[[SearchResult], None]] = None,
+        cancel_event: Optional[threading.Event] = None
     ) -> List[SearchResult]:
         """
-        Ejecuta una búsqueda
+        Ejecuta una búsqueda con manejo robusto de recursos.
 
         Args:
             query: Objeto SearchQuery con los parámetros
             callback: Función opcional para procesar resultados en tiempo real
+            cancel_event: Event opcional para cancelar la búsqueda
 
         Returns:
             Lista de SearchResult
+
+        ROBUSTEZ:
+        - COM cleanup garantizado en finally block
+        - Safe field access para campos faltantes
+        - Cancelación limpia mediante Event
+        - Retry logic para errores transitorios
         """
         results = []
         connection = None
         recordset = None
+        com_needs_cleanup = False
 
         try:
-            # Obtener conexión
-            connection = self._get_connection()
+            # Track COM initialization for this search
+            com_needs_cleanup = self._ensure_com_initialized()
+
+            # Obtener conexión con retry
+            for attempt in range(self.MAX_RETRIES):
+                try:
+                    connection = self._get_connection()
+                    break
+                except ConnectionError:
+                    if attempt < self.MAX_RETRIES - 1:
+                        logger.warning(f"Connection attempt {attempt + 1} failed, retrying...")
+                        time.sleep(self.RETRY_DELAY)
+                    else:
+                        raise
 
             # Construir y ejecutar query SQL
             sql_query = query.build_sql_query()
@@ -453,21 +532,29 @@ class WindowsSearchEngine:
             recordset.Open(sql_query, connection)
 
             # Procesar resultados
+            processed_count = 0
             while not recordset.EOF:
+                # Check cancellation
+                if cancel_event and cancel_event.is_set():
+                    logger.info("Search cancelled by user")
+                    break
+
                 try:
                     result = self._parse_record(recordset)
-                    results.append(result)
+                    if result:  # Only add valid results
+                        results.append(result)
+                        processed_count += 1
 
-                    # Callback para procesamiento en tiempo real
-                    if callback:
-                        callback(result)
+                        # Callback para procesamiento en tiempo real
+                        if callback:
+                            callback(result)
 
                 except Exception as e:
                     logger.warning(f"Error procesando registro: {e}")
 
                 recordset.MoveNext()
 
-            logger.info(f"Búsqueda completada: {len(results)} resultados")
+            logger.info(f"Búsqueda completada: {len(results)} resultados (processed: {processed_count})")
             return results
 
         except Exception as e:
@@ -475,55 +562,74 @@ class WindowsSearchEngine:
             raise
 
         finally:
-            # Limpiar recursos
-            if recordset:
+            # Limpiar recursos en orden correcto
+            if recordset is not None:
                 try:
-                    recordset.Close()
+                    # Check if recordset is open before closing
+                    if hasattr(recordset, 'State') and recordset.State != 0:
+                        recordset.Close()
                 except Exception as e:
                     logger.debug(f"Error closing recordset: {e}")
+                finally:
+                    recordset = None  # Break circular reference
 
-            if connection:
+            if connection is not None:
                 try:
-                    connection.Close()
+                    # Check if connection is open before closing (adStateClosed = 0)
+                    if hasattr(connection, 'State') and connection.State != 0:
+                        connection.Close()
                 except Exception as e:
                     logger.debug(f"Error closing connection: {e}")
+                finally:
+                    connection = None  # Break circular reference
 
-            # Liberar COM
-            pythoncom.CoUninitialize()
+            # Only cleanup COM if we initialized it in this call
+            if com_needs_cleanup:
+                self._cleanup_com()
 
-    @staticmethod
-    def _parse_record(recordset) -> SearchResult:
-        """Parsea un registro de ADO a SearchResult"""
+    def _parse_record(self, recordset) -> Optional[SearchResult]:
+        """
+        Parsea un registro de ADO a SearchResult.
+
+        ROBUSTEZ:
+        - Usa _get_field_safe para todos los campos
+        - Retorna None en lugar de crashear si campos críticos faltan
+        - Manejo seguro de fechas y tipos
+        """
         try:
-            path = recordset.Fields("System.ItemPathDisplay").Value or ""
-            name = recordset.Fields("System.FileName").Value or ""
-            size = recordset.Fields("System.Size").Value or 0
+            # Get required fields safely
+            path = self._get_field_safe(recordset, "System.ItemPathDisplay", "")
+            name = self._get_field_safe(recordset, "System.FileName", "")
 
-            # Fechas
-            modified = recordset.Fields("System.DateModified").Value
-            created = recordset.Fields("System.DateCreated").Value
+            # Validate required fields
+            if not path:
+                logger.debug("Record missing path, skipping")
+                return None
 
-            # Convertir fechas de COM a datetime
-            if modified:
-                try:
-                    modified = datetime.fromisoformat(str(modified))
-                except (ValueError, TypeError, AttributeError) as e:
-                    logger.debug(f"Error parsing modified date: {e}")
-                    modified = None
+            # If no name, extract from path
+            if not name:
+                name = os.path.basename(path)
 
-            if created:
-                try:
-                    created = datetime.fromisoformat(str(created))
-                except (ValueError, TypeError, AttributeError) as e:
-                    logger.debug(f"Error parsing created date: {e}")
-                    created = None
+            size = self._get_field_safe(recordset, "System.Size", 0)
+
+            # Fechas - get safely
+            modified_raw = self._get_field_safe(recordset, "System.DateModified", None)
+            created_raw = self._get_field_safe(recordset, "System.DateCreated", None)
+
+            # Convertir fechas de COM a datetime con manejo robusto
+            modified = self._parse_com_date(modified_raw)
+            created = self._parse_com_date(created_raw)
 
             # Extensión y tipo
-            extension = recordset.Fields("System.FileExtension").Value or ""
-            item_type = recordset.Fields("System.ItemType").Value or ""
+            extension = self._get_field_safe(recordset, "System.FileExtension", "")
+            item_type = self._get_field_safe(recordset, "System.ItemType", "")
 
-            # Determinar si es directorio
-            is_directory = os.path.isdir(path) if path else False
+            # Determinar si es directorio (sin crashear si path es inválido)
+            is_directory = False
+            try:
+                is_directory = os.path.isdir(path) if path else False
+            except (OSError, ValueError) as e:
+                logger.debug(f"Error checking if directory: {e}")
 
             return SearchResult(
                 path=path,
@@ -538,7 +644,32 @@ class WindowsSearchEngine:
 
         except Exception as e:
             logger.warning(f"Error parseando registro: {e}")
-            raise
+            return None  # Return None instead of re-raising
+
+    @staticmethod
+    def _parse_com_date(value) -> Optional[datetime]:
+        """
+        Parse COM date value to datetime safely.
+
+        ROBUSTEZ: Handles multiple date formats and invalid values.
+        """
+        if value is None:
+            return None
+
+        try:
+            # Try direct datetime conversion (pywintypes.datetime)
+            if hasattr(value, 'year'):
+                return datetime(
+                    value.year, value.month, value.day,
+                    value.hour, value.minute, value.second
+                )
+
+            # Try isoformat parsing
+            return datetime.fromisoformat(str(value))
+
+        except (ValueError, TypeError, AttributeError, OSError) as e:
+            logger.debug(f"Error parsing date '{value}': {e}")
+            return None
 
 
 class FallbackSearchEngine:

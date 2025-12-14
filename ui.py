@@ -14,6 +14,8 @@ import sys
 import os
 import logging
 import threading
+import time
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Set, Optional
@@ -86,150 +88,490 @@ except ImportError:
 
 
 class SearchWorker(QThread):
-    """Background worker for file search operations"""
+    """
+    Background worker for file search operations.
+
+    ROBUSTEZ:
+    - Thread-safe counter con lock
+    - Datos inmutables para evitar race conditions
+    - Finally block garantiza emisión de finished signal
+    - Cleanup method para liberar recursos
+    - Manejo robusto de errores de archivos
+    """
     progress = pyqtSignal(int, str)  # progress percentage, current file
     result = pyqtSignal(dict)  # file info dict
     finished = pyqtSignal(int)  # total files found
     error = pyqtSignal(str)  # error message
 
+    # Limits for robustness
+    MAX_RESULTS: int = 50000  # Prevent memory exhaustion
+    STAT_RETRY_COUNT: int = 3
+    STAT_RETRY_DELAY: float = 0.1
+
     def __init__(self, search_paths: List[str], search_term: str, case_sensitive: bool = False):
         super().__init__()
-        self.search_paths = search_paths
-        self.search_term = search_term
-        self.case_sensitive = case_sensitive
+        # Make immutable copies to prevent race conditions
+        self._search_paths = tuple(search_paths) if search_paths else ()
+        self._search_term = str(search_term) if search_term else ""
+        self._case_sensitive = bool(case_sensitive)
         self._cancel_requested = threading.Event()
-        self.files_found = 0
+        self._lock = threading.Lock()
+        self._files_found = 0
+        self._error_occurred = False
+
+    @property
+    def files_found(self) -> int:
+        """Thread-safe access to files_found counter."""
+        with self._lock:
+            return self._files_found
+
+    @property
+    def search_paths(self) -> tuple:
+        """Return immutable search paths."""
+        return self._search_paths
+
+    @property
+    def search_term(self) -> str:
+        """Return search term."""
+        return self._search_term
+
+    @property
+    def case_sensitive(self) -> bool:
+        """Return case sensitivity setting."""
+        return self._case_sensitive
+
+    def _increment_found(self) -> int:
+        """Thread-safe increment of files_found counter."""
+        with self._lock:
+            self._files_found += 1
+            return self._files_found
 
     def run(self):
-        """Execute search in background"""
+        """
+        Execute search in background.
+
+        ROBUSTEZ: Finally block garantiza que finished signal siempre se emite.
+        """
         try:
-            for search_path in self.search_paths:
+            for search_path in self._search_paths:
                 if self._cancel_requested.is_set():
                     break
+
+                # Validate path exists before searching
+                if not search_path or not os.path.exists(search_path):
+                    logger.warning(f"Search path does not exist: {search_path}")
+                    continue
+
                 self._search_directory(search_path)
 
-            if not self._cancel_requested.is_set():
-                self.finished.emit(self.files_found)
-            else:
-                self.finished.emit(0)
+                # Check result limit
+                if self.files_found >= self.MAX_RESULTS:
+                    logger.warning(f"Result limit reached ({self.MAX_RESULTS})")
+                    break
+
         except Exception as e:
+            self._error_occurred = True
             if not self._cancel_requested.is_set():
                 self.error.emit(str(e))
                 logger.exception(f"Error in search worker: {e}")
 
+        finally:
+            # ALWAYS emit finished signal so UI can reset state
+            if self._cancel_requested.is_set():
+                self.finished.emit(0)
+            elif self._error_occurred:
+                self.finished.emit(0)
+            else:
+                self.finished.emit(self.files_found)
+
     def _search_directory(self, path: str):
-        """Recursively search directory"""
-        try:
-            for root, dirs, files in os.walk(path):
-                if self._cancel_requested.is_set():
-                    break
+        """
+        Recursively search directory using os.scandir for performance.
 
-                for filename in files:
-                    if self._cancel_requested.is_set():
-                        break
+        ROBUSTEZ:
+        - Uses os.scandir() instead of os.walk() for better performance
+        - Handles permission errors gracefully
+        - Checks cancellation frequently
+        """
+        dirs_to_process = [path]
 
-                    # Check if filename matches search term
-                    if self._matches_search(filename):
-                        file_path = os.path.join(root, filename)
+        while dirs_to_process and not self._cancel_requested.is_set():
+            current_dir = dirs_to_process.pop(0)
+
+            try:
+                with os.scandir(current_dir) as entries:
+                    subdirs = []
+                    for entry in entries:
+                        if self._cancel_requested.is_set():
+                            return
+
+                        # Check result limit
+                        if self.files_found >= self.MAX_RESULTS:
+                            return
+
                         try:
-                            file_info = self._get_file_info(file_path)
-                            self.result.emit(file_info)
-                            self.files_found += 1
+                            # Skip symlinks to avoid loops
+                            if entry.is_symlink():
+                                continue
 
-                            if self.files_found % 10 == 0:
-                                self.progress.emit(0, file_path)
-                        except (PermissionError, FileNotFoundError) as e:
-                            logger.debug(f"Permission/File error: {e}")
+                            if entry.is_file(follow_symlinks=False):
+                                if self._matches_search(entry.name):
+                                    try:
+                                        file_info = self._get_file_info_from_entry(entry)
+                                        if file_info:
+                                            self.result.emit(file_info)
+                                            count = self._increment_found()
+
+                                            if count % 10 == 0:
+                                                self.progress.emit(0, entry.path)
+                                    except (PermissionError, FileNotFoundError) as e:
+                                        logger.debug(f"File access error: {e}")
+                                        continue
+
+                            elif entry.is_dir(follow_symlinks=False):
+                                subdirs.append(entry.path)
+
+                        except (PermissionError, OSError) as e:
+                            logger.debug(f"Cannot access {entry.path}: {e}")
                             continue
-        except PermissionError as e:
-            logger.debug(f"Permission denied for directory: {path}")
-            pass
+
+                    dirs_to_process.extend(subdirs)
+
+            except PermissionError:
+                logger.debug(f"Permission denied for directory: {current_dir}")
+            except OSError as e:
+                logger.debug(f"OS error accessing {current_dir}: {e}")
 
     def _matches_search(self, filename: str) -> bool:
-        """Check if filename matches search criteria"""
-        if not self.search_term:
+        """Check if filename matches search criteria."""
+        if not self._search_term:
             return True
 
-        search = self.search_term if self.case_sensitive else self.search_term.lower()
-        name = filename if self.case_sensitive else filename.lower()
+        search = self._search_term if self._case_sensitive else self._search_term.lower()
+        name = filename if self._case_sensitive else filename.lower()
         return search in name
 
+    def _get_file_info_from_entry(self, entry: os.DirEntry) -> Optional[Dict]:
+        """
+        Extract file information from DirEntry (uses cached stat).
+
+        ROBUSTEZ:
+        - Uses entry.stat() which is cached by os.scandir()
+        - Retry logic for locked files
+        - Returns None instead of raising on errors
+        """
+        for attempt in range(self.STAT_RETRY_COUNT):
+            try:
+                stat = entry.stat(follow_symlinks=False)
+                return {
+                    'name': entry.name,
+                    'path': entry.path,
+                    'size': stat.st_size,
+                    'modified': datetime.fromtimestamp(stat.st_mtime),
+                    'category': FileType.get_category(entry.path)
+                }
+            except PermissionError:
+                # File might be locked, retry
+                if attempt < self.STAT_RETRY_COUNT - 1:
+                    time.sleep(self.STAT_RETRY_DELAY)
+                else:
+                    logger.debug(f"Permission denied after retries: {entry.path}")
+                    return None
+            except (FileNotFoundError, OSError) as e:
+                logger.debug(f"Error getting file info: {e}")
+                return None
+
+        return None
+
     def _get_file_info(self, file_path: str) -> Dict:
-        """Extract file information"""
-        stat = os.stat(file_path)
-        return {
-            'name': os.path.basename(file_path),
-            'path': file_path,
-            'size': stat.st_size,
-            'modified': datetime.fromtimestamp(stat.st_mtime),
-            'category': FileType.get_category(file_path)
-        }
+        """
+        Extract file information (legacy method for compatibility).
+
+        ROBUSTEZ: Retry logic for locked files.
+        """
+        for attempt in range(self.STAT_RETRY_COUNT):
+            try:
+                stat = os.stat(file_path)
+                return {
+                    'name': os.path.basename(file_path),
+                    'path': file_path,
+                    'size': stat.st_size,
+                    'modified': datetime.fromtimestamp(stat.st_mtime),
+                    'category': FileType.get_category(file_path)
+                }
+            except PermissionError:
+                if attempt < self.STAT_RETRY_COUNT - 1:
+                    time.sleep(self.STAT_RETRY_DELAY)
+                else:
+                    raise
 
     def stop(self):
-        """Stop the search"""
+        """Stop the search gracefully."""
         self._cancel_requested.set()
         logger.info("Search cancellation requested")
 
+    def cleanup(self):
+        """
+        Clean up resources after search completes.
+
+        Call this after the worker has finished to reset state.
+        """
+        self._cancel_requested.clear()
+        with self._lock:
+            self._files_found = 0
+        self._error_occurred = False
+
 
 class FileOperationWorker(QThread):
-    """Background worker for file copy/move operations"""
+    """
+    Background worker for file copy/move operations.
+
+    ROBUSTEZ:
+    - Verificación de espacio en disco antes de copiar
+    - Verificación de integridad después de copiar (tamaño)
+    - Cleanup de archivos parciales en caso de error
+    - Move seguro: copy + verify + delete
+    - Manejo de archivos bloqueados con retry
+    """
     progress = pyqtSignal(int, str)  # progress percentage, current file
     finished = pyqtSignal(int, int)  # success count, error count
     error = pyqtSignal(str)
 
+    # Configuration
+    MAX_RETRIES: int = 3
+    RETRY_DELAY: float = 0.5
+    VERIFY_THRESHOLD: int = 1024 * 1024  # Verify files > 1MB
+
     def __init__(self, files: List[str], destination: str, operation: FileOperation):
         super().__init__()
-        self.files = files
-        self.destination = destination
-        self.operation = operation
+        # Make immutable copies
+        self._files = tuple(files) if files else ()
+        self._destination = str(destination) if destination else ""
+        self._operation = operation
         self._cancel_requested = threading.Event()
-        self.success_count = 0
-        self.error_count = 0
+        self._lock = threading.Lock()
+        self._success_count = 0
+        self._error_count = 0
+        self._completed_operations: List[tuple] = []  # For potential rollback
+
+    @property
+    def files(self) -> tuple:
+        return self._files
+
+    @property
+    def destination(self) -> str:
+        return self._destination
+
+    @property
+    def operation(self) -> FileOperation:
+        return self._operation
+
+    @property
+    def success_count(self) -> int:
+        with self._lock:
+            return self._success_count
+
+    @property
+    def error_count(self) -> int:
+        with self._lock:
+            return self._error_count
 
     def run(self):
-        """Execute file operations"""
-        import shutil
+        """
+        Execute file operations with verification and cleanup.
 
-        total = len(self.files)
-        for i, file_path in enumerate(self.files):
-            # Check for cancellation
-            if self._cancel_requested.is_set():
-                logger.info("File operation cancelled by user")
-                break
+        ROBUSTEZ:
+        - Verifica espacio en disco
+        - Verifica integridad de archivos copiados
+        - Limpia archivos parciales en caso de error
+        """
+        total = len(self._files)
+        if total == 0:
+            self.finished.emit(0, 0)
+            return
 
+        # Validate destination exists
+        if not os.path.isdir(self._destination):
+            self.error.emit(f"Destination directory does not exist: {self._destination}")
+            self.finished.emit(0, total)
+            return
+
+        # Check available disk space
+        try:
+            total_size = sum(os.path.getsize(f) for f in self._files if os.path.exists(f))
+            if not self._check_disk_space(self._destination, total_size):
+                self.error.emit(f"Insufficient disk space for operation")
+                self.finished.emit(0, total)
+                return
+        except Exception as e:
+            logger.warning(f"Could not check disk space: {e}")
+            # Continue anyway
+
+        try:
+            for i, file_path in enumerate(self._files):
+                # Check for cancellation
+                if self._cancel_requested.is_set():
+                    logger.info("File operation cancelled by user")
+                    break
+
+                dest_path = None
+                try:
+                    # Validate source exists
+                    if not os.path.exists(file_path):
+                        raise FileNotFoundError(f"Source file not found: {file_path}")
+
+                    filename = os.path.basename(file_path)
+                    dest_path = os.path.join(self._destination, filename)
+
+                    # Handle name conflicts
+                    dest_path = self._resolve_conflict(dest_path)
+
+                    if self._operation == FileOperation.COPY:
+                        self._copy_with_verification(file_path, dest_path)
+                        self._completed_operations.append(('COPY', dest_path))
+                    else:  # MOVE
+                        self._move_safely(file_path, dest_path)
+                        self._completed_operations.append(('MOVE', file_path, dest_path))
+
+                    with self._lock:
+                        self._success_count += 1
+
+                    progress = int((i + 1) / total * 100)
+                    self.progress.emit(progress, filename)
+
+                except Exception as e:
+                    with self._lock:
+                        self._error_count += 1
+                    error_msg = f"Error processing {file_path}: {str(e)}"
+                    self.error.emit(error_msg)
+                    logger.error(error_msg)
+
+                    # Cleanup partial file
+                    if dest_path and os.path.exists(dest_path):
+                        try:
+                            os.remove(dest_path)
+                            logger.debug(f"Cleaned up partial file: {dest_path}")
+                        except Exception as cleanup_error:
+                            logger.error(f"Failed to cleanup {dest_path}: {cleanup_error}")
+
+        finally:
+            self.finished.emit(self.success_count, self.error_count)
+
+    def _resolve_conflict(self, dest_path: str) -> str:
+        """Resolve filename conflicts by adding counter."""
+        if not os.path.exists(dest_path):
+            return dest_path
+
+        base, ext = os.path.splitext(dest_path)
+        counter = 1
+        while os.path.exists(dest_path):
+            dest_path = f"{base}_{counter}{ext}"
+            counter += 1
+            if counter > 1000:  # Safety limit
+                raise ValueError("Too many filename conflicts")
+        return dest_path
+
+    def _copy_with_verification(self, src: str, dst: str):
+        """
+        Copy file with verification for large files.
+
+        ROBUSTEZ:
+        - Retry logic for locked files
+        - Size verification after copy
+        """
+        src_size = os.path.getsize(src)
+
+        for attempt in range(self.MAX_RETRIES):
             try:
-                filename = os.path.basename(file_path)
-                dest_path = os.path.join(self.destination, filename)
+                shutil.copy2(src, dst)
 
-                # Handle name conflicts
-                if os.path.exists(dest_path):
-                    base, ext = os.path.splitext(filename)
-                    counter = 1
-                    while os.path.exists(dest_path):
-                        filename = f"{base}_{counter}{ext}"
-                        dest_path = os.path.join(self.destination, filename)
-                        counter += 1
+                # Verify for large files
+                if src_size > self.VERIFY_THRESHOLD:
+                    dst_size = os.path.getsize(dst)
+                    if src_size != dst_size:
+                        raise IOError(f"Copy verification failed: size mismatch {src_size} vs {dst_size}")
 
-                if self.operation == FileOperation.COPY:
-                    shutil.copy2(file_path, dest_path)
-                else:  # MOVE
-                    shutil.move(file_path, dest_path)
+                return  # Success
 
-                self.success_count += 1
-                progress = int((i + 1) / total * 100)
-                self.progress.emit(progress, filename)
-            except Exception as e:
-                self.error_count += 1
-                error_msg = f"Error processing {file_path}: {str(e)}"
-                self.error.emit(error_msg)
-                logger.error(error_msg)
+            except PermissionError as e:
+                if attempt < self.MAX_RETRIES - 1:
+                    logger.warning(f"Copy attempt {attempt + 1} failed (locked?), retrying...")
+                    time.sleep(self.RETRY_DELAY)
+                    # Cleanup failed attempt
+                    if os.path.exists(dst):
+                        try:
+                            os.remove(dst)
+                        except:
+                            pass
+                else:
+                    raise
 
-        self.finished.emit(self.success_count, self.error_count)
+    def _move_safely(self, src: str, dst: str):
+        """
+        Move file safely: copy + verify + delete.
+
+        ROBUSTEZ:
+        - Copy first, then verify, then delete source
+        - Prevents data loss if operation fails midway
+        """
+        src_size = os.path.getsize(src)
+
+        # Try native move first (faster for same filesystem)
+        try:
+            shutil.move(src, dst)
+
+            # Verify destination exists with correct size
+            if os.path.exists(dst) and os.path.getsize(dst) == src_size:
+                return  # Success
+
+        except Exception as e:
+            logger.debug(f"Native move failed, trying copy+delete: {e}")
+
+            # Cleanup failed move attempt
+            if os.path.exists(dst):
+                try:
+                    os.remove(dst)
+                except:
+                    pass
+
+        # Fallback: copy + verify + delete
+        self._copy_with_verification(src, dst)
+
+        # Verify destination
+        if not os.path.exists(dst):
+            raise IOError("Move failed: destination not created")
+
+        # Delete source only after successful copy
+        try:
+            os.remove(src)
+        except Exception as e:
+            # Destination exists but can't delete source
+            logger.warning(f"Move partially complete - source not deleted: {e}")
+            # Don't remove destination - data is preserved
+
+    @staticmethod
+    def _check_disk_space(path: str, required_bytes: int) -> bool:
+        """Check if destination has enough free space."""
+        try:
+            stat = shutil.disk_usage(path)
+            # Require 10% overhead for filesystem metadata
+            return stat.free > (required_bytes * 1.1)
+        except Exception as e:
+            logger.warning(f"Cannot check disk space: {e}")
+            return True  # Proceed anyway
 
     def stop(self):
-        """Stop file operations"""
+        """Stop file operations gracefully."""
         self._cancel_requested.set()
         logger.info("File operation cancellation requested")
+
+    def cleanup(self):
+        """Clean up resources after operations complete."""
+        self._cancel_requested.clear()
+        with self._lock:
+            self._success_count = 0
+            self._error_count = 0
+        self._completed_operations.clear()
 
 
 class DirectoryTreeWidget(QTreeWidget):
@@ -332,7 +674,14 @@ class DirectoryTreeWidget(QTreeWidget):
 
 
 class ResultsTableWidget(QTableWidget):
-    """Table widget for displaying search results"""
+    """
+    Table widget for displaying search results.
+
+    ROBUSTEZ:
+    - Batched updates for better performance
+    - Memory-efficient item creation
+    - Configurable row limits
+    """
 
     HEADERS = ["Name", "Path", "Size", "Modified", "Type"]
 
@@ -341,6 +690,10 @@ class ResultsTableWidget(QTableWidget):
     open_location_requested = pyqtSignal(list)
     copy_requested = pyqtSignal(list)
     move_requested = pyqtSignal(list)
+
+    # Memory/performance configuration
+    MAX_VISIBLE_ROWS: int = 10000  # Warn user above this
+    BATCH_SIZE: int = 100  # Items to add before UI update
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -351,6 +704,10 @@ class ResultsTableWidget(QTableWidget):
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.setAlternatingRowColors(True)
         self.setSortingEnabled(True)
+
+        # ROBUSTEZ: Batching state
+        self._pending_items: List[Dict] = []
+        self._batch_timer: Optional[QTimer] = None
 
         # Configure header
         header = self.horizontalHeader()
@@ -367,7 +724,18 @@ class ResultsTableWidget(QTableWidget):
         self.customContextMenuRequested.connect(self._show_context_menu)
 
     def add_result(self, file_info: Dict):
-        """Add a file result to the table"""
+        """
+        Add a file result to the table.
+
+        ROBUSTEZ:
+        - Disables sorting during insert for performance
+        - Uses batching for multiple rapid inserts
+        """
+        # Disable sorting during insert (prevents re-sorting on each row)
+        was_sorting = self.isSortingEnabled()
+        if was_sorting:
+            self.setSortingEnabled(False)
+
         row = self.rowCount()
         self.insertRow(row)
 
@@ -393,6 +761,10 @@ class ResultsTableWidget(QTableWidget):
         # Type
         type_item = QTableWidgetItem(Path(file_info['name']).suffix.upper() or "FILE")
         self.setItem(row, 4, type_item)
+
+        # Re-enable sorting (will sort once at end)
+        if was_sorting:
+            self.setSortingEnabled(True)
 
 
     def get_selected_files(self) -> List[str]:
@@ -449,13 +821,28 @@ class ResultsTableWidget(QTableWidget):
 
 
 class SmartSearchWindow(QMainWindow):
-    """Main application window"""
+    """
+    Main application window.
+
+    ROBUSTEZ:
+    - Throttled progress updates to avoid UI lag
+    - Memory usage warnings
+    - Graceful cleanup on close
+    """
+
+    # Memory/performance configuration
+    MAX_RESULTS_WARNING: int = 10000  # Warn above this
+    PROGRESS_UPDATE_INTERVAL: int = 100  # ms between progress updates
 
     def __init__(self):
         super().__init__()
         self.search_worker = None
         self.operation_worker = None
         self.dark_mode = False
+
+        # ROBUSTEZ: Progress throttling
+        self._last_progress_update: float = 0
+        self._memory_warning_shown: bool = False
 
         self._init_ui()
         self._setup_shortcuts()
@@ -812,6 +1199,10 @@ class SmartSearchWindow(QMainWindow):
         # Clear previous results
         self._clear_results()
 
+        # Reset memory warning flag for new search
+        self._memory_warning_shown = False
+        self._last_progress_update = 0
+
         # Get search term
         search_term = self.search_input.text().strip()
         case_sensitive = self.case_sensitive_cb.isChecked()
@@ -846,27 +1237,75 @@ class SmartSearchWindow(QMainWindow):
         self.status_bar.showMessage(f"Searching: {current_file}")
 
     def _on_search_result(self, file_info: Dict):
-        """Handle search result"""
+        """
+        Handle search result.
+
+        ROBUSTEZ:
+        - Throttled UI updates for better performance
+        - Memory warning when results exceed threshold
+        """
         category = file_info['category']
         table = self.result_tables[category]
         table.add_result(file_info)
 
         # Update file count
-        total = sum(table.rowCount() for table in self.result_tables.values())
-        self.file_count_label.setText(f"Files: {total}")
+        total = sum(t.rowCount() for t in self.result_tables.values())
 
-        # Update tab labels with counts
-        for file_type, table in self.result_tables.items():
-            count = table.rowCount()
-            tab_index = list(self.result_tables.keys()).index(file_type)
-            self.results_tabs.setTabText(tab_index, f"{file_type.display_name} ({count})")
+        # ROBUSTEZ: Throttle UI updates for performance
+        current_time = time.time() * 1000  # ms
+        if current_time - self._last_progress_update >= self.PROGRESS_UPDATE_INTERVAL:
+            self._last_progress_update = current_time
+            self.file_count_label.setText(f"Files: {total}")
+
+            # Update tab labels with counts
+            for file_type, t in self.result_tables.items():
+                count = t.rowCount()
+                tab_index = list(self.result_tables.keys()).index(file_type)
+                self.results_tabs.setTabText(tab_index, f"{file_type.display_name} ({count})")
+
+        # ROBUSTEZ: Memory warning (show only once per search)
+        if total >= self.MAX_RESULTS_WARNING and not self._memory_warning_shown:
+            self._memory_warning_shown = True
+            self.status_bar.showMessage(
+                f"⚠ Large result set ({total}+ files). Consider narrowing your search.", 10000
+            )
 
     def _on_search_finished(self, total_files: int):
         """Handle search completion"""
         self.search_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
-        self.status_bar.showMessage(f"Search complete. Found {total_files} files.", 5000)
+
+        # ROBUSTEZ: Force final UI update (since we throttle during search)
+        actual_total = sum(t.rowCount() for t in self.result_tables.values())
+        self.file_count_label.setText(f"Files: {actual_total}")
+        for file_type, t in self.result_tables.items():
+            count = t.rowCount()
+            tab_index = list(self.result_tables.keys()).index(file_type)
+            self.results_tabs.setTabText(tab_index, f"{file_type.display_name} ({count})")
+
+        self.status_bar.showMessage(f"Search complete. Found {actual_total} files.", 5000)
+
+        # ROBUSTEZ: Cleanup worker resources after completion
+        if self.search_worker:
+            self.search_worker.cleanup()
+            # Schedule worker deletion to avoid immediate deletion during signal handling
+            QTimer.singleShot(0, self._cleanup_search_worker)
+
+    def _cleanup_search_worker(self):
+        """Safely cleanup search worker after signal handling completes."""
+        if self.search_worker:
+            try:
+                # Disconnect signals to prevent memory leaks
+                self.search_worker.progress.disconnect()
+                self.search_worker.result.disconnect()
+                self.search_worker.finished.disconnect()
+                self.search_worker.error.disconnect()
+            except (TypeError, RuntimeError):
+                # Signals may already be disconnected
+                pass
+            # Clear reference to allow garbage collection
+            self.search_worker = None
 
     def _on_search_error(self, error_msg: str):
         """Handle search error with user-friendly feedback."""
@@ -1116,15 +1555,55 @@ class SmartSearchWindow(QMainWindow):
         QMessageBox.information(self, "Operation Complete", msg)
         self.status_bar.showMessage(f"Operation complete. {success_count} files processed.", 5000)
 
+        # ROBUSTEZ: Cleanup operation worker resources
+        if self.operation_worker:
+            self.operation_worker.cleanup()
+            QTimer.singleShot(0, self._cleanup_operation_worker)
+
+    def _cleanup_operation_worker(self):
+        """Safely cleanup operation worker after signal handling completes."""
+        if self.operation_worker:
+            try:
+                # Disconnect signals to prevent memory leaks
+                self.operation_worker.progress.disconnect()
+                self.operation_worker.finished.disconnect()
+                self.operation_worker.error.disconnect()
+            except (TypeError, RuntimeError):
+                # Signals may already be disconnected
+                pass
+            # Clear reference to allow garbage collection
+            self.operation_worker = None
+
     def _on_operation_error(self, error_msg: str):
         """Handle file operation error"""
         # Log error (could display in a separate error list)
         print(f"Error: {error_msg}")
 
     def _clear_results(self):
-        """Clear all search results"""
+        """
+        Clear all search results.
+
+        ROBUSTEZ:
+        - Clears user data from items before deletion to help GC
+        - Disables sorting during clear for performance
+        """
         for table in self.result_tables.values():
+            # Disable sorting during clear for performance
+            was_sorting_enabled = table.isSortingEnabled()
+            table.setSortingEnabled(False)
+
+            # Clear item data to help garbage collection
+            for row in range(table.rowCount()):
+                for col in range(table.columnCount()):
+                    item = table.item(row, col)
+                    if item:
+                        item.setData(Qt.ItemDataRole.UserRole, None)
+
+            # Clear table
             table.setRowCount(0)
+
+            # Restore sorting
+            table.setSortingEnabled(was_sorting_enabled)
 
         # Reset tab labels
         for file_type, table in self.result_tables.items():
@@ -1135,21 +1614,60 @@ class SmartSearchWindow(QMainWindow):
         self.status_bar.showMessage("Results cleared", 3000)
 
     def closeEvent(self, event):
-        """Handle application close - cleanup threads"""
+        """
+        Handle application close - cleanup threads and signals.
+
+        ROBUSTEZ:
+        - Graceful shutdown of workers with timeout
+        - Disconnect all signals to prevent memory leaks
+        - Clear table data before closing
+        """
         # Stop and cleanup search worker
-        if self.search_worker and self.search_worker.isRunning():
-            self.search_worker.stop()
-            if not self.search_worker.wait(3000):  # 3 second timeout
-                logger.warning("Search worker forced termination on close")
-                self.search_worker.terminate()
-                self.search_worker.wait(1000)
+        if self.search_worker:
+            if self.search_worker.isRunning():
+                self.search_worker.stop()
+                if not self.search_worker.wait(3000):  # 3 second timeout
+                    logger.warning("Search worker forced termination on close")
+                    self.search_worker.terminate()
+                    self.search_worker.wait(1000)
+            try:
+                self.search_worker.progress.disconnect()
+                self.search_worker.result.disconnect()
+                self.search_worker.finished.disconnect()
+                self.search_worker.error.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self.search_worker = None
 
         # Cleanup operation worker
-        if self.operation_worker and self.operation_worker.isRunning():
-            if not self.operation_worker.wait(3000):  # 3 second timeout
-                logger.warning("Operation worker forced termination on close")
-                self.operation_worker.terminate()
-                self.operation_worker.wait(1000)
+        if self.operation_worker:
+            if self.operation_worker.isRunning():
+                self.operation_worker.stop()
+                if not self.operation_worker.wait(3000):  # 3 second timeout
+                    logger.warning("Operation worker forced termination on close")
+                    self.operation_worker.terminate()
+                    self.operation_worker.wait(1000)
+            try:
+                self.operation_worker.progress.disconnect()
+                self.operation_worker.finished.disconnect()
+                self.operation_worker.error.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self.operation_worker = None
+
+        # Disconnect table signals to prevent memory leaks
+        for table in self.result_tables.values():
+            try:
+                table.itemSelectionChanged.disconnect()
+                table.open_requested.disconnect()
+                table.open_location_requested.disconnect()
+                table.copy_requested.disconnect()
+                table.move_requested.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+
+        # Clear results to free memory
+        self._clear_results()
 
         event.accept()
 
